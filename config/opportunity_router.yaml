@@ -1,0 +1,82 @@
+# V3.2 opportunity -> claude-seo specialist routing. Agent names below were
+# confirmed against the actual /home/user/Development/experiments/claude-seo/agents/
+# directory contents at implementation time -- none invented. claude-seo
+# itself is never modified by this project.
+#
+# HARD RULE: this table is consulted at most twice per prospect (first
+# specialist + at most one second opinion) -- see config/limits.yaml:
+# max_specialist_calls / max_second_opinion_calls. Never used to justify
+# calling more than 2 specialists automatically.
+
+opportunity_specialist_map:
+  MAPS_GAP: ["claude-seo:seo-local"]
+  GBP_GAP: ["claude-seo:seo-local"]
+  LOCAL_AUTHORITY_GAP: ["claude-seo:seo-local"]
+  REVIEW_GAP: ["claude-seo:seo-maps"]
+  SERVICE_ARCHITECTURE_GAP: ["claude-seo:seo-cluster"]
+  PRACTICE_AREA_GAP: ["claude-seo:seo-cluster"]
+  ORGANIC_VISIBILITY_GAP: ["claude-seo:seo-content"]
+  COMPETITOR_GAP: ["claude-seo:seo-content"]
+  PAID_OWNED_VISIBILITY_GAP: ["claude-seo:seo-content"]
+  TECHNICAL_INDEXATION_GAP: ["claude-seo:seo-technical"]
+  ENTITY_NAP_GAP: ["claude-seo:seo-schema"]
+  SCHEMA_GAP: ["claude-seo:seo-schema"]
+  CONVERSION_GAP: ["claude-seo:seo-sxo"]
+  # Performance is only routed when the deterministic scan flags it as
+  # commercially material (e.g. a genuinely slow-loading page on a
+  # conversion-critical path) -- it is not a default opportunity_type.
+  PERFORMANCE_GAP_IF_MATERIAL: ["claude-seo:seo-performance"]
+  # NO_CLEAR_OPPORTUNITY never routes to any agent.
+
+# For SECOND_OPINION_REQUIRED: which specialist covers the "other" dimension
+# when a material second commercial dimension is genuinely in play (e.g. the
+# first specialist confirmed a service-architecture gap, but the deterministic
+# scan also flagged a real GBP gap worth a second, independent read before
+# picking the final wedge). Only consulted when route_to_specialist.py's
+# second-opinion gate fires -- see config/limits.yaml.
+second_opinion_pairs:
+  SERVICE_ARCHITECTURE_GAP: ["claude-seo:seo-local", "claude-seo:seo-sxo"]
+  PRACTICE_AREA_GAP: ["claude-seo:seo-local", "claude-seo:seo-sxo"]
+  GBP_GAP: ["claude-seo:seo-cluster", "claude-seo:seo-maps"]
+  MAPS_GAP: ["claude-seo:seo-maps", "claude-seo:seo-cluster"]
+  CONVERSION_GAP: ["claude-seo:seo-cluster", "claude-seo:seo-local"]
+  TECHNICAL_INDEXATION_GAP: ["claude-seo:seo-schema"]
+  ENTITY_NAP_GAP: ["claude-seo:seo-technical"]
+
+# Never routed automatically by V3.2, same rationale as config/routing.yaml.
+never_auto_run:
+  - "claude-seo:seo-dataforseo"
+  - "claude-seo:seo-google"
+  - "claude-seo:seo-backlinks"
+  - "claude-seo:seo-ecommerce"
+  - "claude-seo:seo-geo"
+  - "claude-seo:seo-image-gen"
+  - "claude-seo:seo-drift"
+  - "claude-seo:seo-hreflang"
+  - "claude-seo:seo-flow"
+  - "claude-seo:seo-visual"
+
+# Wedge selection scoring (config/opportunity_router.yaml, not scoring.yaml --
+# this is about choosing among already-qualified-lead opportunities, a
+# distinct axis from FIT/GAP qualification, which stays frozen in V3.2).
+wedge_weights:
+  commercial_relevance: 35
+  evidence_confidence: 30
+  specificity: 20
+  actionability: 15
+
+# opportunity_type -> staged asset type (config/opportunity_router.yaml).
+asset_type_map:
+  SERVICE_ARCHITECTURE_GAP: "THREE_POINT_COMPARISON"
+  PRACTICE_AREA_GAP: "PRACTICE_AREA_GAP_LIST"
+  MAPS_GAP: "MAPS_GAP_SNAPSHOT"
+  GBP_GAP: "GBP_OPPORTUNITY_LIST"
+  REVIEW_GAP: "GBP_OPPORTUNITY_LIST"
+  LOCAL_AUTHORITY_GAP: "GBP_OPPORTUNITY_LIST"
+  TECHNICAL_INDEXATION_GAP: "TECHNICAL_FIX_LIST"
+  SCHEMA_GAP: "TECHNICAL_FIX_LIST"
+  ENTITY_NAP_GAP: "TECHNICAL_FIX_LIST"
+  ORGANIC_VISIBILITY_GAP: "SERVICE_GAP_LIST"
+  COMPETITOR_GAP: "THREE_POINT_COMPARISON"
+  PAID_OWNED_VISIBILITY_GAP: "ONE_PAGE_OPPORTUNITY_SUMMARY"
+  CONVERSION_GAP: "ONE_PAGE_OPPORTUNITY_SUMMARY"

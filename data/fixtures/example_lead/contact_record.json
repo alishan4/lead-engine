@@ -1,0 +1,21 @@
+{
+  "prospect_id": "roofing-exampleville-ex-example-roofing-co",
+  "business_name": "Example Roofing Co.",
+  "identity": {
+    "status": "COMPANY_INBOX_ONLY",
+    "confidence": 0.65,
+    "person_name": null,
+    "role": null,
+    "email": "office@example-roofing.test",
+    "sources": [
+      {"source_type": "official_website_team_page", "url": "https://example-roofing.test/contact",
+       "observed_at": "2026-01-15T09:10:00+00:00", "note": "Email displayed on the site's own contact page. No named owner/manager found."}
+    ],
+    "rejected_evidence": []
+  },
+  "mailbox": {"status": "UNKNOWN", "checked_at": null, "basis": "no active mailbox probing performed -- UNKNOWN is the honest default"},
+  "channel": {"type": "COMPANY_EMAIL", "address_or_url": "office@example-roofing.test"},
+  "overall_status": "CONTACT_VERIFIED",
+  "reverify_reason": null,
+  "generated_at": "2026-01-15T09:10:00+00:00"
+}

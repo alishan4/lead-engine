@@ -1,0 +1,25 @@
+{
+  "run_id": "run-20260120-120000-abcd1234",
+  "started_at": "2026-01-20T12:00:00+00:00",
+  "completed_at": "2026-01-20T12:04:37+00:00",
+  "dry_run": false,
+  "infrastructure_failure": false,
+  "markets_processed": 5,
+  "prospects_discovered": 12,
+  "businesses_verified": 9,
+  "qualified": 3,
+  "high_priority": 1,
+  "needs_enrichment": 2,
+  "rejected": 4,
+  "wedges_created": 1,
+  "assets_staged": 1,
+  "contacts_verified": 1,
+  "contact_form_ready": 0,
+  "qa_pass": 1,
+  "ready_to_send": 1,
+  "failures": [],
+  "limitations": [
+    "Market/discovery workflow: no deterministic discovery exists in this codebase. New markets/businesses must be added via a human/Claude research session, not this cron job.",
+    "2 prospect(s) at DISCOVERED still need business-identity verification research (verify_business.py --print-prompt) before this job can advance them."
+  ]
+}

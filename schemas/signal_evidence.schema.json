@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "signal_evidence.schema.json",
+  "title": "SignalEvidence",
+  "description": "One piece of evidence for one buying/timing signal on one business, V3.1.1. Multiple SignalEvidence items for the same signal_type + prospect are resolved deterministically (scripts/signal_evidence.py: resolve_signals) into the flat prospect fields V3.1's score_fit already consumes -- this object is the auditable trail behind that resolution, never a replacement for it. UNKNOWN != FALSE: a signal with no evidence at all simply has no SignalEvidence object, not one with value=false.",
+  "type": "object",
+  "required": [
+    "signal_type", "value", "confidence", "source", "source_type",
+    "observed_at", "evidence", "entity_match_confidence"
+  ],
+  "properties": {
+    "signal_type": {
+      "type": "string",
+      "description": "Extensible -- any string is accepted so a new signal never requires a schema change. Known types: runs_google_ads, runs_lsa, recent_expansion, new_location, marketing_hiring_signal, review_velocity_signal, recent_site_investment, new_high_value_service, multiple_locations. paid_search_organic_gap is NOT a signal_type here -- it is always derived (see scripts/signal_evidence.py: derive_paid_search_organic_gap), never independently evidenced."
+    },
+    "value": {"type": ["boolean", "string", "null"], "description": "true/false for boolean signals; a string (e.g. STRONG/MODERATE/LOW) for review_velocity_signal; null if this evidence item itself couldn't determine a value (rare -- usually you just wouldn't create the item)"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "How confident THIS evidence item is, independent of source-type trust -- see config/signal_sources.yaml for how source_type interacts with this"},
+    "source": {"type": ["string", "null"], "description": "The specific URL/reference this evidence came from"},
+    "source_type": {
+      "type": "string",
+      "enum": [
+        "official_website", "official_careers", "official_press_release", "official_social",
+        "google_serp", "google_maps", "google_business_profile", "semrush", "job_posting",
+        "government_registry", "licensing_source", "credible_news", "credible_business_directory",
+        "historical_snapshot", "manual_import", "other"
+      ]
+    },
+    "observed_at": {"type": "string", "format": "date-time", "description": "When THIS evidence was actually gathered/observed -- freshness is computed from here, never manufactured"},
+    "published_at": {"type": ["string", "null"], "format": "date-time", "description": "When the underlying fact was published/dated, if known and different from observed_at (e.g. a news article's publish date)"},
+    "freshness_days": {"type": ["number", "null"], "description": "Computed at resolution time (days between observed_at/published_at and now) -- not set by the evidence gatherer, filled in by scripts/signal_evidence.py"},
+    "evidence": {"type": "string", "description": "The specific, checkable observation -- never a generic statement"},
+    "entity_match_confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "How confident this evidence is actually about THIS business (name/domain/phone/address/city cross-check), not a same-named or nearby business"},
+    "notes": {"type": ["string", "null"]}
+  }
+}

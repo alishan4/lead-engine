@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "verification.schema.json",
+  "title": "BusinessVerification",
+  "description": "Identity-verification result for one prospect, produced by prompts/business-verification.md before scoring. Exists to catch company-name collisions (e.g. multiple businesses named 'Example Restoration') by cross-checking the fields discovery actually found against each other.",
+  "type": "object",
+  "required": [
+    "prospect_id", "business_verified", "identity_confidence",
+    "matched_fields", "conflicting_fields", "source_notes"
+  ],
+  "properties": {
+    "prospect_id": {"type": "string"},
+    "business_verified": {"type": "boolean"},
+    "identity_confidence": {
+      "type": "number", "minimum": 0, "maximum": 1,
+      "description": "How confident we are that website/GBP/phone/address all refer to the SAME physical business named in business_name."
+    },
+    "matched_fields": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Fields that corroborate each other, e.g. 'phone matches address listing', 'website matches GBP name'"
+    },
+    "conflicting_fields": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Fields that disagree or couldn't be reconciled, e.g. 'website domain unrelated to business name', 'address ambiguous across 2 same-named businesses'"
+    },
+    "source_notes": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Where each matched/conflicting field claim came from"
+    }
+  }
+}

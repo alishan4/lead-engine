@@ -1,0 +1,72 @@
+# Known franchise / corporate-marketing-controlled / lead-gen-network brand
+# name patterns, used by scripts/check_franchise.py as a CHEAP FIRST PASS,
+# not a verdict. A match here only means "research whether local management
+# can actually buy local SEO for this specific location" -- it does NOT
+# auto-reject. Many franchisees are independently owned and DO control their
+# own marketing spend; some corporate-owned locations do not.
+#
+# Matching is case-insensitive substring match against business_name and
+# website domain. Keep this list conservative and easy to extend -- false
+# negatives (a franchise we don't catch) just mean an extra research pass
+# happens later at the verification/contact stage; false positives (an
+# unrelated business coincidentally matching) only trigger extra research,
+# never an auto-reject, so err toward including obvious, well-known brands.
+
+restoration:
+  - servpro
+  - servicemaster
+  - "paul davis"
+  - belfor
+  - "rainbow international"
+  - puroclean
+  - "1-800-water damage"
+  - "1800waterdamage"
+  - "united water restoration group"
+  - "resicom"
+  - "servicemaster restore"
+
+plumbing:
+  - "mr. rooter"
+  - "mr rooter"
+  - "roto-rooter"
+  - "rotorooter"
+  - "benjamin franklin plumbing"
+
+hvac:
+  - "aire serv"
+  - "one hour heating"
+  - "one hour air"
+  - "service experts"
+  - "comfort keepers heating"  # rare mismatch risk (elder-care brand); kept for coverage, human review will disambiguate
+
+roofing:
+  - "bone dry roofing"
+
+dental_dso:
+  # Dental Support Organizations -- corporate-owned groups of dental
+  # practices. A location branded under one of these is very likely
+  # corporate-marketing-controlled, but confirm per-location before locking.
+  - "aspen dental"
+  - "heartland dental"
+  - "pacific dental services"
+  - "smile brands"
+  - "western dental"
+  - "mid atlantic dental partners"
+
+legal_lead_gen_networks:
+  # These are lead-generation / directory platforms, not law firms
+  # themselves. A discovered "prospect" that is actually one of these is a
+  # LEAD_GEN_NETWORK, not a contactable local business.
+  - "1-800-injured"
+  - "legalmatch"
+  - "avvo"
+  - "justia lawyer directory"
+  - "findlaw directory"
+
+general_lead_gen_aggregators:
+  # Home-service directory/aggregator platforms -- same LEAD_GEN_NETWORK
+  # logic as above, applied outside legal niches.
+  - "homeadvisor"
+  - "angi leads"
+  - "thumbtack"
+  - "networx"

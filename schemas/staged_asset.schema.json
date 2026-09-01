@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "staged_asset.schema.json",
+  "title": "StagedAsset",
+  "description": "The response asset staged for a future 'want me to send the short comparison?' reply, stored at data/leads/<slug>/staged_asset.json (structured JSON/Markdown, never a PDF by default). Generated deterministically (scripts/stage_asset.py) from the already-validated primary_wedge -- no extra LLM call to merely rephrase already-structured evidence.",
+  "type": "object",
+  "required": ["asset_type", "title", "sections", "generated_at", "source_wedge_confidence"],
+  "properties": {
+    "asset_type": {
+      "type": "string",
+      "enum": [
+        "THREE_POINT_COMPARISON", "SERVICE_GAP_LIST", "PRACTICE_AREA_GAP_LIST",
+        "MAPS_GAP_SNAPSHOT", "GBP_OPPORTUNITY_LIST", "TECHNICAL_FIX_LIST",
+        "ONE_PAGE_OPPORTUNITY_SUMMARY"
+      ]
+    },
+    "title": {"type": "string"},
+    "sections": {
+      "type": "object",
+      "required": ["what_i_noticed", "prospect_state", "market_comparison", "observations", "recommended_first_action", "evidence_references", "limitations"],
+      "properties": {
+        "what_i_noticed": {"type": "string"},
+        "prospect_state": {"type": "string"},
+        "market_comparison": {"type": ["string", "null"]},
+        "observations": {
+          "type": "array", "maxItems": 3,
+          "description": "At most 3 highest-value observations -- never a full findings list"
+        },
+        "recommended_first_action": {"type": "string"},
+        "evidence_references": {"type": "array", "items": {"type": "string"}},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "generated_at": {"type": "string", "format": "date-time"},
+    "source_wedge_confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "asset_type": "THREE_POINT_COMPARISON",
+  "title": "Example Roofing Co. — Competitor Gap",
+  "sections": {
+    "what_i_noticed": "Rival Roofing Exampleville ranks #1 for 'emergency roof repair exampleville' and Example Roofing Co. does not appear in the top 10 for that term.",
+    "prospect_state": "Example Roofing Co. (roofing, Exampleville, EX) -- FIT 62, GAP 48.",
+    "market_comparison": "Compared with: Rival Roofing Exampleville.",
+    "observations": ["Rival Roofing Exampleville ranks #1 for 'emergency roof repair exampleville' and Example Roofing Co. does not appear in the top 10 for that term."],
+    "recommended_first_action": "Publish a dedicated landing page for the specific service/intent the named competitor already covers.",
+    "evidence_references": ["market.json top_competitors cache"],
+    "limitations": ["gap_missing_fields: ['gbp_review_count']"]
+  },
+  "generated_at": "2026-01-15T09:07:00+00:00",
+  "source_wedge_confidence": 0.8
+}

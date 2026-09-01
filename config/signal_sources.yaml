@@ -1,0 +1,133 @@
+# V3.1.1 buying/timing signal evidence rules. Every value here is a
+# configurable operating rule, not a universal truth -- revisit as real
+# outreach data accumulates (see reports/V3.1.1-BUYING-SIGNALS-REPORT.md).
+#
+# Read by scripts/signal_evidence.py. Nothing in score_leads.py/qualify_leads.py
+# hardcodes a source, confidence band, or freshness window -- it's all here.
+
+# ----------------------------------------------------------------------------
+# Confidence bands. A SignalEvidence item's `confidence` (0-1) maps to one of
+# these tiers. HIGH_PRIORITY may only be triggered by a VERIFIED or
+# STRONG_VERIFIED signal (config/scoring.yaml / qualify_leads.py: route_v3)
+# -- WEAK and UNUSABLE can never independently promote a lead.
+# ----------------------------------------------------------------------------
+confidence_bands:
+  strong_verified_min: 0.85
+  verified_min: 0.70
+  weak_min: 0.50
+  # below weak_min -> UNUSABLE, discarded entirely during resolution (not
+  # even eligible to set a null field to a value)
+
+# ----------------------------------------------------------------------------
+# Freshness windows, in days. Evidence older than its signal's window is
+# STALE and cannot independently trigger HIGH_PRIORITY (it also can't set a
+# fresh resolved value -- a stale confirmation just leaves the field
+# unresolved for THIS run, it doesn't flip to null-forever; a fresh
+# re-observation can still confirm it later).
+# ----------------------------------------------------------------------------
+freshness_days:
+  runs_google_ads: 7          # ad presence changes week to week
+  runs_lsa: 7
+  recent_expansion: 180
+  new_location: 180
+  marketing_hiring_signal: 60  # a posting open 60+ days ago is no longer "current hiring"
+  recent_site_investment: 180
+  new_high_value_service: 180
+  multiple_locations: 365      # slow-changing structural fact, not a timing signal
+  # review_velocity_signal has no single freshness window -- it's computed
+  # from the interval between two snapshots (see compute_review_velocity),
+  # not from the age of a single observation.
+
+# ----------------------------------------------------------------------------
+# Entity-match gating. Evidence below this confidence is rejected outright
+# during resolution -- it never sets a field, true OR false, and is recorded
+# only as a rejected/ambiguous item for human review (scripts/signal_evidence.py).
+# ----------------------------------------------------------------------------
+min_entity_match_confidence: 0.75
+
+# ----------------------------------------------------------------------------
+# Per-signal acceptable source hierarchy. `high_confidence_sources` are the
+# only source_types that may back a STRONG_VERIFIED/VERIFIED result for that
+# signal; `low_confidence_sources` can still be recorded but are capped at
+# WEAK regardless of the evidence item's stated confidence -- e.g. a single
+# directory listing must never alone prove a NEW location.
+# `never_sufficient` documents source_types that must NEVER be used to
+# infer this signal at all, even indirectly -- enforced in
+# prompts/buying-signals.md AND spot-checked by scripts/signal_evidence.py.
+# ----------------------------------------------------------------------------
+signal_source_rules:
+  runs_google_ads:
+    high_confidence_sources: [google_serp, semrush]
+    low_confidence_sources: []
+    never_sufficient_notes: >
+      Never infer from: high CPC alone, Semrush keyword-volume data alone,
+      existence of a landing page, tracking-script presence, or a generic
+      "this niche runs ads" statement. Must be an actual observed
+      advertiser placement for THIS business/domain, current.
+
+  runs_lsa:
+    high_confidence_sources: [google_serp, google_maps]
+    low_confidence_sources: []
+    never_sufficient_notes: >
+      Never infer from: being a service-area business, having a GBP,
+      appearing in Maps organically, or a competitor running LSA. Must be
+      an actual observed LSA badge/placement for THIS business.
+
+  recent_expansion:
+    high_confidence_sources: [official_website, official_press_release, official_social, credible_news, google_business_profile]
+    low_confidence_sources: [credible_business_directory]
+    never_sufficient_notes: >
+      A directory listing alone must never prove NEW/recent -- directories
+      are frequently stale or duplicated. Multiple locations existing is
+      not evidence of RECENT expansion (see multiple_locations).
+
+  new_location:
+    high_confidence_sources: [official_website, official_press_release, official_social, credible_news, google_business_profile]
+    low_confidence_sources: [credible_business_directory]
+    never_sufficient_notes: >
+      Same rule as recent_expansion -- a directory alone is not sufficient.
+
+  marketing_hiring_signal:
+    high_confidence_sources: [official_careers, job_posting]
+    low_confidence_sources: []
+    never_sufficient_notes: >
+      An old/cached job posting past freshness_days.marketing_hiring_signal
+      is not "current" hiring -- treat as stale, not as a false signal.
+
+  recent_site_investment:
+    high_confidence_sources: [official_press_release, official_social, historical_snapshot]
+    low_confidence_sources: []
+    never_sufficient_notes: >
+      Never infer from: the site looking modern, a 2026 copyright notice,
+      modern framework/asset fingerprints, or a recent page-modified
+      timestamp alone -- all of these are consistent with a site that was
+      simply never changed and had its template auto-update a date field.
+      Requires an explicit launch/redesign announcement OR a real
+      historical-snapshot comparison (e.g. Wayback Machine) showing a
+      materially different prior version with a dated capture.
+
+  new_high_value_service:
+    high_confidence_sources: [official_press_release, official_website, official_social, credible_news, historical_snapshot]
+    low_confidence_sources: []
+    never_sufficient_notes: >
+      Currently offering a valuable service is not evidence it's NEW --
+      requires a dated announcement or a historical-snapshot comparison
+      showing the service was absent before.
+
+  multiple_locations:
+    high_confidence_sources: [official_website, google_business_profile, government_registry, licensing_source]
+    low_confidence_sources: [credible_business_directory]
+    never_sufficient_notes: >
+      This is a structural fact (does N>=2 real distinct addresses exist),
+      not a timing signal -- do not conflate with new_location/recent_expansion.
+
+# ----------------------------------------------------------------------------
+# Review velocity thresholds (reviews per 30-day period, computed
+# deterministically from >=2 timestamped snapshots -- see
+# scripts/signal_evidence.py: compute_review_velocity). Never inferred from
+# a single point-in-time review count. Initial heuristics, not universal.
+# ----------------------------------------------------------------------------
+review_velocity_thresholds:
+  strong_per_month: 5
+  moderate_per_month: 2
+  # below moderate_per_month -> LOW. Fewer than 2 snapshots -> UNKNOWN, always.

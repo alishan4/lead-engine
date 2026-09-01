@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "contact_record.schema.json",
+  "title": "ContactRecord",
+  "description": "V3.3 outreach contact record at data/leads/<slug>/contact_record.json. Separates two DISTINCT axes: identity (who is this, and is a real name/inbox verifiably tied to this business) and mailbox (is that address likely to actually accept mail). Neither axis may be inferred from the other. Re-verifies rather than trusting any prior V2 contact.json blindly.",
+  "type": "object",
+  "required": ["prospect_id", "business_name", "identity", "mailbox", "channel", "generated_at"],
+  "properties": {
+    "prospect_id": {"type": "string"},
+    "business_name": {"type": "string"},
+    "identity": {
+      "type": "object",
+      "required": ["status", "confidence", "sources"],
+      "properties": {
+        "status": {"type": "string", "enum": ["VERIFIED", "COMPANY_INBOX_ONLY", "FORM_ONLY", "UNVERIFIED", "REVERIFY_REQUIRED"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "person_name": {"type": ["string", "null"]},
+        "role": {"type": ["string", "null"]},
+        "email": {"type": ["string", "null"], "format": "email"},
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source_type", "observed_at"],
+            "properties": {
+              "source_type": {"type": "string"},
+              "url": {"type": ["string", "null"]},
+              "observed_at": {"type": "string", "format": "date-time"},
+              "note": {"type": ["string", "null"]}
+            }
+          }
+        },
+        "rejected_evidence": {
+          "type": "array",
+          "description": "Evidence considered but NOT used to establish identity (e.g. aggregator-only email, dead secondary domain) -- kept visible rather than silently discarded.",
+          "items": {"type": "object"}
+        }
+      }
+    },
+    "mailbox": {
+      "type": "object",
+      "required": ["status", "basis"],
+      "properties": {
+        "status": {"type": "string", "enum": ["UNKNOWN", "VALID", "RISKY", "INVALID"]},
+        "checked_at": {"type": ["string", "null"], "format": "date-time"},
+        "basis": {"type": "string", "description": "Why this status was assigned -- never a bare guess; UNKNOWN is the honest default absent real signal."}
+      }
+    },
+    "channel": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"type": "string", "enum": ["NAMED_EMAIL", "COMPANY_EMAIL", "CONTACT_FORM", "NONE"]},
+        "address_or_url": {"type": ["string", "null"]}
+      }
+    },
+    "overall_status": {
+      "type": "string",
+      "enum": ["CONTACT_VERIFIED", "CONTACT_FORM_READY", "CONTACT_UNVERIFIED", "CONTACT_REVERIFY_REQUIRED"]
+    },
+    "reverify_reason": {"type": ["string", "null"]},
+    "generated_at": {"type": "string", "format": "date-time"}
+  }
+}

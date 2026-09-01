@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "prospect.schema.json",
+  "title": "Prospect",
+  "description": "One discovered local business, before or after scoring/qualification. Unknown fields must be null, not omitted, so downstream scripts can rely on key presence.",
+  "type": "object",
+  "required": [
+    "id", "business_name", "city", "state", "country", "niche",
+    "website", "google_business_profile_url", "maps_position",
+    "organic_position", "rating", "review_count", "years_in_business",
+    "obvious_website_issue", "obvious_gbp_issue", "service_page_count",
+    "competitor_gap", "commercial_value_signal", "verified_business",
+    "source_notes", "discovered_at", "last_audited_at", "content_hash",
+    "status"
+  ],
+  "properties": {
+    "id": {"type": "string", "description": "Stable slug id, e.g. roofing-charlotte-nc-kingdom-roofing"},
+    "business_name": {"type": "string"},
+    "city": {"type": ["string", "null"]},
+    "state": {"type": ["string", "null"]},
+    "country": {"type": ["string", "null"], "default": "US"},
+    "niche": {"type": ["string", "null"], "description": "Key into config/niches.yaml"},
+    "website": {"type": ["string", "null"]},
+    "google_business_profile_url": {"type": ["string", "null"]},
+    "maps_position": {"type": ["integer", "null"], "description": "Local pack / Maps rank for the target keyword, if measured"},
+    "organic_position": {"type": ["integer", "null"], "description": "Organic SERP rank for the target money keyword, if measured"},
+    "rating": {"type": ["number", "null"], "minimum": 0, "maximum": 5},
+    "review_count": {"type": ["integer", "null"], "minimum": 0},
+    "years_in_business": {"type": ["integer", "null"]},
+    "obvious_website_issue": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Free-text tags observed at discovery time, e.g. thin_service_pages, no_online_booking, slow_site, no_https, outdated_design, weak_cta"
+    },
+    "obvious_gbp_issue": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "e.g. missing_categories, few_photos, unanswered_reviews, incomplete_hours, no_qanda"
+    },
+    "service_page_count": {"type": ["integer", "null"]},
+    "competitor_gap": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Short notes on what named competitors have that this business doesn't"
+    },
+    "commercial_value_signal": {
+      "type": ["string", "null"],
+      "enum": ["high", "medium", "low", "none", null],
+      "description": "Rough estimate of ticket size / lead value for this business; 'none' triggers a hard reject"
+    },
+    "verified_business": {"type": ["boolean", "null"], "description": "Confirmed operating (site live, phone valid, GBP claimed/active, etc.)"},
+    "source_notes": {"type": ["string", "null"], "description": "Where/how this prospect was found"},
+    "discovered_at": {"type": "string", "format": "date-time"},
+    "last_audited_at": {"type": ["string", "null"], "format": "date-time"},
+    "content_hash": {"type": ["string", "null"], "description": "Hash of homepage+key pages content, used for cache invalidation"},
+    "status": {
+      "type": "string",
+      "enum": [
+        "DISCOVERED", "BUSINESS_VERIFIED", "SCORED", "INITIAL_SCORE",
+        "NEEDS_ENRICHMENT", "RESCORED", "MANUAL_REVIEW", "QUALIFIED",
+        "QUICK_AUDIT", "REJECTED", "OPPORTUNITY_IDENTIFIED", "DOSSIER_READY",
+        "REVERIFY_REQUIRED", "CONTACT_VERIFICATION", "CONTACT_UNVERIFIED",
+        "CONTACT_VERIFIED", "EMAIL_DRAFT_READY", "QA_PASS",
+        "FRANCHISE_REVIEW_REQUIRED", "CORPORATE_MARKETING_LOCK", "LEAD_GEN_NETWORK",
+        "COMMERCIAL_FIT_ASSESSED", "BUYING_SIGNALS_ASSESSED",
+        "CONTACTABILITY_CHECK", "CONTACTABILITY_FAILED", "GOOGLE_GAP_ASSESSED",
+        "FIT_SCORED", "GAP_SCORED", "HIGH_PRIORITY",
+        "INTELLIGENCE_ELIGIBLE", "DETERMINISTIC_SCAN_COMPLETE", "AGENT_NOT_REQUIRED",
+        "AGENT_ROUTED", "SPECIALIST_ANALYSIS_COMPLETE", "SECOND_OPINION_REQUIRED",
+        "NO_DEFENSIBLE_WEDGE", "ASSET_STAGED", "INTELLIGENCE_FAILED",
+        "CONTACT_FORM_READY", "CONTACT_REVERIFY_REQUIRED", "SUPPRESSED", "ACCOUNT_LOCKED",
+        "QA_FAILED", "READY_TO_SEND", "SEND_WINDOW_PLANNED", "DRY_RUN_SENT", "GMAIL_SENT",
+        "DELIVERY_CHECK", "NO_BOUNCE_DETECTED", "DELIVERY_FAILED",
+        "FOLLOW_UP_DUE", "AWAITING_REPLY", "REPLIED", "CLOSED", "HUMAN_REVIEW", "RECYCLE_ELIGIBLE"
+      ],
+      "description": "SCORED is a legacy V1 alias, no longer produced but still accepted on old records; V2 produces INITIAL_SCORE instead. V3.1 (qualify_leads.py --v3) adds the FRANCHISE_*/COMMERCIAL_FIT_*/BUYING_SIGNALS_*/CONTACTABILITY_*/GOOGLE_GAP_*/FIT_SCORED/GAP_SCORED/HIGH_PRIORITY states -- these are a parallel qualification track that runs instead of (not in addition to) V2's INITIAL_SCORE->NEEDS_ENRICHMENT/QUALIFIED path; a record is on one track or the other, never both at once."
+    },
+    "score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "Alias for confirmed_score, kept for V1 compatibility"},
+    "score_breakdown": {"type": ["object", "null"]},
+    "reject_reason": {"type": ["string", "null"]},
+
+    "business_verified": {"type": ["boolean", "null"]},
+    "identity_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "matched_fields": {"type": ["array", "null"], "items": {"type": "string"}},
+    "conflicting_fields": {"type": ["array", "null"], "items": {"type": "string"}},
+    "verification_source_notes": {"type": ["array", "null"], "items": {"type": "string"}},
+
+    "confirmed_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "Score from KNOWN fields only -- missing data contributes zero, never a penalty"},
+    "potential_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "Best-case score if every currently-missing high-value field turned out favorable"},
+    "data_completeness": {"type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "Percent of tracked evidence fields that are actually known"},
+    "missing_fields": {"type": ["array", "null"], "items": {"type": "string"}},
+
+    "score_before_enrichment": {"type": ["integer", "null"]},
+    "score_after_enrichment": {"type": ["integer", "null"]},
+    "enrichment_fields_added": {"type": ["array", "null"], "items": {"type": "string"}},
+    "enrichment_source": {"type": ["string", "null"], "description": "e.g. semrush_csv, manual_csv, json_snapshot"},
+    "enrichment_observed_at": {"type": ["string", "null"], "format": "date-time"},
+
+    "_comment_v3_1": "Everything below is V3.1 (qualify_leads.py --v3). All optional/nullable so old V2 records still load unchanged -- absent keys are treated as null by every V3.1 script via .get().",
+
+    "possible_franchise": {"type": ["boolean", "null"], "description": "Cheap blocklist match against config/franchise_blocklist.yaml -- a match does NOT imply corporate_marketing_controlled"},
+    "corporate_marketing_controlled": {"type": ["boolean", "null"], "description": "true only if research confirms local management cannot buy its own local SEO -- this, not possible_franchise, is what blocks the pipeline"},
+    "lead_gen_network": {"type": ["boolean", "null"], "description": "true if the discovered 'business' is actually a lead-gen/directory/aggregator platform, not a contactable local business"},
+    "franchise_evidence": {"type": ["array", "null"], "items": {"type": "string"}},
+
+    "fit_confirmed_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+    "fit_potential_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+    "fit_completeness": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+    "fit_missing_fields": {"type": ["array", "null"], "items": {"type": "string"}},
+    "fit_breakdown": {"type": ["object", "null"], "description": "component -> points, mirrors config/scoring.yaml: fit_weights"},
+
+    "gap_confirmed_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+    "gap_potential_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+    "gap_completeness": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+    "gap_missing_fields": {"type": ["array", "null"], "items": {"type": "string"}},
+    "gap_breakdown": {"type": ["object", "null"], "description": "component -> points, mirrors config/scoring.yaml: gap_weights"},
+
+    "runs_google_ads": {"type": ["boolean", "null"]},
+    "runs_lsa": {"type": ["boolean", "null"], "description": "Local Services Ads"},
+    "paid_search_organic_gap": {"type": ["boolean", "null"], "description": "derived: true when ads/LSA confirmed AND organic/maps visibility is weak or unknown"},
+    "recent_expansion": {"type": ["boolean", "null"]},
+    "new_location": {"type": ["boolean", "null"]},
+    "marketing_hiring_signal": {"type": ["boolean", "null"]},
+    "review_velocity_signal": {"type": ["string", "null"], "enum": ["STRONG", "MODERATE", "LOW", null]},
+    "recent_site_investment": {"type": ["boolean", "null"]},
+    "new_high_value_service": {"type": ["boolean", "null"]},
+    "multiple_locations": {"type": ["boolean", "null"]},
+    "buying_signal_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "V3.1 legacy summary field, superseded by buying_signal_tiers in V3.1.1 but kept for backward compatibility"},
+    "buying_signal_evidence": {"type": ["array", "null"], "items": {"type": "string"}},
+    "buying_signal_tiers": {
+      "type": ["object", "null"],
+      "description": "V3.1.1: signal_type -> 'STRONG_VERIFIED'/'VERIFIED'/'WEAK'/'UNUSABLE'/null, from scripts/signal_evidence.py: resolve_signal. HIGH_PRIORITY and why_now may only consume a signal whose tier here is VERIFIED or STRONG_VERIFIED -- a bare true value with no tier (or a WEAK one) can never independently trigger either."
+    },
+    "signal_conflicts": {
+      "type": ["array", "null"], "items": {"type": "string"},
+      "description": "signal_types where fresh evidence disagreed on the value (schemas/signal_evidence.schema.json) -- these stay null/unresolved until a human reconciles the conflicting evidence, never arbitrarily picked"
+    },
+
+    "contactability_score": {"type": ["integer", "null"], "enum": [0, 1, 2, null]},
+    "named_owner_found": {"type": ["boolean", "null"]},
+    "named_marketing_contact_found": {"type": ["boolean", "null"]},
+    "named_ops_contact_found": {"type": ["boolean", "null"]},
+    "official_email_visible": {"type": ["boolean", "null"]},
+    "official_contact_form_available": {"type": ["boolean", "null"]},
+    "likely_contact_role": {"type": ["string", "null"], "enum": ["owner", "founder", "marketing_manager", "operations_manager", "company_inbox", null]},
+    "contactability_evidence": {"type": ["array", "null"], "items": {"type": "string"}},
+
+    "why_this_company": {"type": ["string", "null"]},
+    "why_this_problem": {"type": ["string", "null"]},
+    "why_now": {"type": ["string", "null"], "description": "null/absent means no defensible timing signal -- keeps the lead at QUALIFIED, not HIGH_PRIORITY"},
+    "why_likely_buyer": {"type": ["string", "null"]},
+
+    "_comment_v3_2": "V3.2 intelligence-layer summary fields. Full detail lives in data/leads/<id>/{opportunity_candidates.json, primary_wedge.json, intelligence_dossier.json, staged_asset.json} -- these are just the flat fields useful for filtering/reporting.",
+    "primary_wedge_type": {"type": ["string", "null"]},
+    "primary_wedge_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "intelligence_agents_used": {"type": ["array", "null"], "items": {"type": "string"}},
+    "intelligence_content_hash": {"type": ["string", "null"], "description": "content_hash of the pages fetched during the deterministic scan -- reused for intelligence cache invalidation, separate from V1's dossier-level content_hash"},
+    "intelligence_cache_hit": {"type": ["boolean", "null"]},
+    "no_defensible_wedge_reason": {"type": ["string", "null"]},
+    "qualification_tier": {"type": ["string", "null"], "enum": ["QUALIFIED", "HIGH_PRIORITY", null], "description": "Snapshot of status at V3.2 entry, since `status` itself advances through the intelligence pipeline -- route_to_specialist.py's agent-budget gate reads this, never the live `status`"}
+  }
+}

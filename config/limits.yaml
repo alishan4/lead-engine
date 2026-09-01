@@ -1,0 +1,46 @@
+# Token / cost governor for the whole pipeline. Every script and prompt in
+# this project reads these values instead of hardcoding limits.
+
+max_quick_agents: 3          # hard cap on specialists per quick audit
+max_deep_agents: 3           # hard cap on specialists per deep audit (rarely reached)
+max_quick_audit_words: 500
+max_opportunity_words: 250
+max_email_words: 180
+max_email_qa_words: 120
+max_pages_initial_audit: 5   # homepage + up to 4 more pages during quick audit
+cache_days: 14               # reuse prior audit if content_hash unchanged and within this window
+min_opportunity_confidence: 0.75
+
+# V2 additions
+min_identity_confidence: 0.75  # business-verification gate (config/routing.yaml is unaffected)
+min_contact_confidence: 0.8    # contact-verification gate; below this, stays CONTACT_UNVERIFIED
+finding_freshness_days: 7      # a dossier's strongest_finding older than this needs REVERIFY_REQUIRED
+ranking_freshness_days: 14     # imported ranking data older than this can't back a ranking claim in an email
+
+# V3.1 additions -- commercial-fit / buying-signal / contactability /
+# basic-gap qualification gate, all BEFORE any claude-seo agent is allowed.
+# The FIT/GAP score thresholds themselves (reject_max, manual_review_max,
+# qualified_min, high_priority_min) live in config/scoring.yaml (fit_thresholds/
+# gap_thresholds) -- that is the single source of truth qualify_leads.py's
+# route_v3() actually reads. Only the cost/behavior knobs below live here.
+min_contactability_for_expensive_work: 1   # contactability_score below this blocks quick-audit eligibility (see qualify_leads.py --v3)
+max_gap_assessment_pages: 3                # basic Google-gap assessment is capped at homepage + 1 service/practice page + contact/about when needed -- no full audit; currently fully deterministic (no page fetch of its own), see assess_google_gap.py
+
+# V3.2 additions -- deterministic-first commercial-opportunity intelligence
+# layer, only for QUALIFIED/HIGH_PRIORITY leads. FIT/GAP thresholds above are
+# frozen and untouched by any V3.2 script.
+max_intelligence_pages: 5          # homepage + best service/practice page + hub + location + contact/about, cap
+max_competitor_pages: 3            # competitor pages fetched for comparison, cap
+max_specialist_calls_normal: 1     # default cap for QUALIFIED leads
+max_specialist_calls_high_priority: 2  # cap for HIGH_PRIORITY / genuine ambiguity / material 2nd dimension
+usable_confidence_threshold: 0.70  # a specialist finding below this cannot back OPPORTUNITY_IDENTIFIED alone
+intelligence_cache_days: 14        # mirrors cache_days; reuse prior scan if content_hash unchanged within this window
+max_wedge_observations_in_asset: 3 # staged asset never lists more than 3 highest-value observations
+genuine_ambiguity_min_confidence: 0.55  # a specialist confidence in [this, usable_confidence_threshold) is "borderline", eligible for a second opinion; below it is just weak -- stop, don't chase a second agent
+
+# HARD RULE, not configurable by editing a number above 14/18:
+# This pipeline must never run the full claude-seo specialist roster on a
+# single lead automatically. max_quick_agents and max_deep_agents must each
+# stay well below the full roster size at all times.
+never_run_all_agents: true
+full_specialist_roster_size: 18  # informational only; see claude-seo/AGENTS.md

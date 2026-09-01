@@ -1,0 +1,75 @@
+# Agent routing table. Maps observed problem_type -> claude-seo specialist(s).
+# HARD RULE: never run all specialists automatically. quick_audit is capped at
+# max_quick_agents (config/limits.yaml, default 3). deep_audit only runs if the
+# quick audit returns deeper_audit_needed: true AND confidence >= min threshold.
+#
+# Agent names below refer to subagent_type values usable with the Agent tool,
+# e.g. "claude-seo:seo-local". claude-seo itself is never modified by this project.
+
+quick_audit_routes:
+  gbp_gap:
+    agents: ["claude-seo:seo-local"]
+    max_agents: 1
+  service_architecture_gap:
+    agents: ["claude-seo:seo-cluster", "claude-seo:seo-content"]
+    max_agents: 2
+  technical_gap:
+    agents: ["claude-seo:seo-technical", "claude-seo:seo-sitemap"]
+    max_agents: 2
+  entity_nap_gap:
+    agents: ["claude-seo:seo-schema"]
+    max_agents: 1
+  conversion_gap:
+    agents: ["claude-seo:seo-sxo"]
+    max_agents: 1
+  performance_gap:
+    agents: ["claude-seo:seo-performance"]
+    max_agents: 1
+  content_gap:
+    agents: ["claude-seo:seo-content"]
+    max_agents: 1
+  ranking_gap:
+    agents: ["claude-seo:seo-maps", "claude-seo:seo-local"]
+    max_agents: 2
+  review_gap:
+    agents: ["claude-seo:seo-maps"]
+    max_agents: 1
+  competitor_gap:
+    agents: ["claude-seo:seo-local", "claude-seo:seo-content"]
+    max_agents: 2
+  website_gap:
+    agents: ["claude-seo:seo-sxo", "claude-seo:seo-technical"]
+    max_agents: 2
+  automation_gap:
+    agents: ["claude-seo:seo-sxo"]
+    max_agents: 1
+
+# When the discovery record signals more than one problem_type, route_agents.py
+# unions the routes, de-dupes, and truncates to max_quick_agents (limits.yaml),
+# prioritized in the order problem_types were listed on the prospect.
+
+deep_audit_routes:
+  # Only invoked when quick audit sets deeper_audit_needed=true and confidence
+  # is high. Deep routes may add specialists beyond the quick-audit set, still
+  # capped at max_deep_agents. Never includes anything in never_auto_run below.
+  gbp_gap: ["claude-seo:seo-maps"]
+  service_architecture_gap: ["claude-seo:seo-sitemap"]
+  technical_gap: ["claude-seo:seo-schema"]
+  conversion_gap: ["claude-seo:seo-sxo"]
+  ranking_gap: ["claude-seo:seo-local"]
+
+never_auto_run:
+  # Reserved for expensive / paid-API / rarely-needed specialists. These are
+  # NEVER selected automatically by route_agents.py at any stage (quick or
+  # deep). A human can still invoke them manually outside this pipeline.
+  # route_agents.py filters both route tables against this list defensively.
+  - "claude-seo:seo-dataforseo"
+  - "claude-seo:seo-google"
+  - "claude-seo:seo-backlinks"
+  - "claude-seo:seo-ecommerce"
+  - "claude-seo:seo-geo"
+  - "claude-seo:seo-image-gen"
+  - "claude-seo:seo-drift"
+  - "claude-seo:seo-hreflang"
+  - "claude-seo:seo-flow"
+  - "claude-seo:seo-visual"

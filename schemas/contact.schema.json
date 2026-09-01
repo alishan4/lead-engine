@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "contact.schema.json",
+  "title": "Contact",
+  "description": "The verified (or not-yet-verified) recipient for one lead's outreach email, at data/leads/<slug>/contact.json. Produced by prompts/contact-verification.md + scripts/verify_contact.py. Hard rule: an email address that wasn't found on a public source -- only guessed/inferred (e.g. assuming info@domain.com) -- can never be marked contact_verified: true, and a prospect can never reach EMAIL_DRAFT_READY without one.",
+  "type": "object",
+  "required": [
+    "business_name", "contact_name", "role", "email", "email_domain",
+    "source_url", "source_type", "domain_matches_business",
+    "contact_verified", "verification_confidence", "observed_at", "notes"
+  ],
+  "properties": {
+    "business_name": {"type": "string"},
+    "contact_name": {"type": ["string", "null"], "description": "null if only a company inbox was found, not a named person"},
+    "role": {
+      "type": ["string", "null"],
+      "enum": ["owner", "founder", "marketing_manager", "operations_manager", "company_inbox", null],
+      "description": "Priority order for outreach: owner/founder > marketing_manager > operations_manager > company_inbox"
+    },
+    "email": {"type": ["string", "null"], "format": "email"},
+    "email_domain": {"type": ["string", "null"]},
+    "source_url": {"type": ["string", "null"], "description": "Where this exact email/name was found -- required if contact_verified is true"},
+    "source_type": {
+      "type": "string",
+      "enum": ["company_website", "gbp", "linkedin", "public_directory", "press_release", "guessed", "none"],
+      "description": "'guessed' can NEVER pair with contact_verified: true"
+    },
+    "domain_matches_business": {"type": ["boolean", "null"]},
+    "contact_verified": {
+      "type": "boolean",
+      "description": "true only if the email was found on a public, credible source -- never for an inferred/guessed address"
+    },
+    "verification_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "notes": {"type": "string"}
+  }
+}

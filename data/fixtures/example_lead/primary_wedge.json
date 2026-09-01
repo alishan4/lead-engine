@@ -1,0 +1,18 @@
+{
+  "opportunity_type": "COMPETITOR_GAP",
+  "observation": "Rival Roofing Exampleville ranks #1 for 'emergency roof repair exampleville' and Example Roofing Co. does not appear in the top 10 for that term.",
+  "confidence": 0.8,
+  "commercial_relevance": 0.9,
+  "specificity": 1.0,
+  "actionability": 0.8,
+  "evidence": [
+    {"source": "market.json top_competitors cache", "source_type": "internal_market_cache", "statement": "Rival Roofing Exampleville has held the #1 organic position for this term across the last 3 snapshots."}
+  ],
+  "recommended_first_action": "Publish a dedicated landing page for the specific service/intent the named competitor already covers.",
+  "why_now": "Recent second-location expansion (STRONG_VERIFIED) makes new-service-page investment timely.",
+  "why_this_company": "Example Roofing Co. is a roofing business in Exampleville, EX.",
+  "why_this_problem": "Rival Roofing Exampleville ranks #1 for 'emergency roof repair exampleville' and Example Roofing Co. does not appear in the top 10 for that term.",
+  "why_likely_buyer": "A verified expansion signal correlates with marketing budget availability.",
+  "agents_used": [],
+  "generated_at": "2026-01-15T09:05:00+00:00"
+}

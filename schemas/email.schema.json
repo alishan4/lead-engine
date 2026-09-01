@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "email.schema.json",
+  "title": "EmailDraft",
+  "description": "A draft outreach email plus its QA verdict. V2 NEVER sends this — it is stored at data/leads/<slug>/email.json for human review only, and export_gmail_drafts.py only ever produces a DRAFT_ONLY export.",
+  "type": "object",
+  "required": ["prospect_id", "subject", "body", "word_count", "qa"],
+  "properties": {
+    "prospect_id": {"type": "string"},
+    "subject": {"type": "string"},
+    "body": {"type": "string"},
+    "word_count": {"type": "integer"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "preview_only": {"type": ["boolean", "null"], "description": "true if generated via generate_email.py --preview, bypassing the contact/freshness gates -- can never reach EMAIL_DRAFT_READY"},
+    "recipient_email": {"type": ["string", "null"], "description": "populated only from a contact.json with contact_verified: true"},
+    "qa": {
+      "type": "object",
+      "required": ["verdict", "checks", "notes"],
+      "properties": {
+        "verdict": {"type": "string", "enum": ["PASS", "REWRITE", "REJECT", "REVERIFY_REQUIRED"]},
+        "checks": {
+          "type": "object",
+          "properties": {
+            "recipient_verified": {"type": "boolean", "description": "contact.json exists with contact_verified: true"},
+            "facts_supported": {"type": "boolean", "description": "every claim maps to a dossier.evidence_items entry"},
+            "finding_fresh": {"type": "boolean", "description": "passed scripts/check_freshness.py at draft time"},
+            "ranking_claims_sourced_and_dated": {"type": "boolean", "description": "true if no exact ranking figure is cited, OR any cited figure has a dated evidence_items source"},
+            "no_unsupported_causal_statements": {"type": "boolean"},
+            "first_paragraph_proves_research": {"type": "boolean"},
+            "finding_commercially_relevant": {"type": "boolean"},
+            "gives_free_value": {"type": "boolean"},
+            "no_ranking_guarantee": {"type": "boolean"},
+            "not_overly_salesy": {"type": "boolean"},
+            "generic_reuse_risk_pct": {"type": "number", "minimum": 0, "maximum": 100}
+          }
+        },
+        "generic_reuse_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100, "description": "alias of checks.generic_reuse_risk_pct, kept at top level per Phase 13 spec"},
+        "unsupported_claims": {"type": "array", "items": {"type": "string"}},
+        "stale_claims": {"type": "array", "items": {"type": "string"}},
+        "verification_issues": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"}
+      }
+    },
+    "revision_of": {"type": ["string", "null"], "description": "prospect_id + version this rewrite supersedes, if any"}
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "prospect_id": "roofing-exampleville-ex-example-roofing-co",
+  "franchise": {
+    "possible_franchise": false,
+    "corporate_marketing_controlled": false,
+    "lead_gen_network": false,
+    "blocklist_match": null,
+    "research_escalated": false,
+    "evidence": []
+  },
+  "fit": {
+    "confirmed_score": 62,
+    "potential_score": 90,
+    "completeness": 80,
+    "missing_fields": ["review_count"],
+    "breakdown": {
+      "niche_economics": 20,
+      "business_maturity": 15,
+      "buying_intent": 12,
+      "contactability": 15,
+      "market_attractiveness": 0
+    }
+  },
+  "gap": {
+    "confirmed_score": 48,
+    "potential_score": 70,
+    "completeness": 75,
+    "missing_fields": ["gbp_review_count"],
+    "breakdown": {
+      "maps_gbp_opportunity": 20,
+      "organic_visibility_opportunity": 0,
+      "service_architecture": 20,
+      "gbp_review_gap": 0,
+      "technical_indexation": 8,
+      "competitor_gap": 0
+    }
+  },
+  "buying_signals": {
+    "runs_google_ads": null,
+    "runs_lsa": null,
+    "recent_expansion": null,
+    "new_location": true,
+    "marketing_hiring_signal": null,
+    "review_velocity_signal": null,
+    "recent_site_investment": null,
+    "new_high_value_service": null,
+    "multiple_locations": null,
+    "tiers": {"new_location": "STRONG_VERIFIED"},
+    "resolution_status": {"new_location": "RESOLVED"},
+    "conflicts": [],
+    "evidence_count": 1,
+    "resolved_at": "2026-01-15T09:00:00+00:00"
+  },
+  "why_now_object": {
+    "why_now": "Opened a second location in the last 6 months (STRONG_VERIFIED, real permit filing).",
+    "why_this_company": "Example Roofing Co. is a roofing business in Exampleville, EX.",
+    "why_this_problem": "A named local competitor ranks for a service Example Roofing Co. does not have a dedicated page for.",
+    "why_likely_buyer": "Recent expansion is a real, verified growth signal correlated with marketing budget availability."
+  },
+  "routing": {
+    "status": "HIGH_PRIORITY",
+    "reason": "FIT and GAP both cleared their qualified thresholds and a STRONG_VERIFIED buying signal was present",
+    "expensive_audit_permitted": true
+  },
+  "generated_at": "2026-01-15T09:00:00+00:00"
+}

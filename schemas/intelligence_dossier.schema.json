@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "intelligence_dossier.schema.json",
+  "title": "IntelligenceDossier",
+  "description": "V3.2 compact dossier, stored at data/leads/<slug>/intelligence_dossier.json. Distinct from V2's schemas/dossier.schema.json (the email-generation dossier) -- this one exists to support personalized outreach, fast reply handling, and a later deeper audit if the prospect engages. Never a full SEO report. Only produced after OPPORTUNITY_IDENTIFIED.",
+  "type": "object",
+  "required": [
+    "business", "market", "qualification", "primary_wedge",
+    "competitor_context", "decision_maker_context", "contactability",
+    "sources", "observed_at", "limitations"
+  ],
+  "properties": {
+    "business": {"type": "object", "description": "name, niche, city, state, website -- copied from the prospect record"},
+    "market": {"type": "object", "description": "market_id, cached competitor/ranking context"},
+    "qualification": {
+      "type": "object",
+      "required": ["fit", "gap", "buying_signals"],
+      "properties": {
+        "fit": {"type": "object"},
+        "gap": {"type": "object"},
+        "buying_signals": {"type": "array"}
+      }
+    },
+    "primary_wedge": {"type": "object", "description": "schemas/primary_wedge.schema.json content"},
+    "competitor_context": {"type": "array", "items": {"type": "object"}},
+    "decision_maker_context": {"type": "object", "description": "role/likely_contact_role from V3.1's contactability pre-check -- NOT a verified email; final contact verification is unchanged, out of scope for V3.2"},
+    "contactability": {"type": "object"},
+    "sources": {"type": "array", "items": {"type": "string"}},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "cost_metrics": {"type": ["object", "null"], "description": "scripts/intelligence_cost.py output, kept alongside the dossier for traceability"}
+  }
+}

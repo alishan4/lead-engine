@@ -1,0 +1,85 @@
+# Rule-based lead scoring. Runs BEFORE any claude-seo agent is invoked.
+# Score is 0-100 (clamped). Any reject_if_* rule short-circuits straight to
+# status=REJECTED regardless of point total, and no AI is ever called for it.
+#
+# score_leads.py reads this file. Field names correspond to prospect.schema.json.
+
+weights:
+  maps_position_4_to_15: 20      # maps_position between 4 and 15 inclusive
+  organic_position_5_to_30: 10   # organic_position between 5 and 30 inclusive
+  weak_service_pages: 15         # obvious_website_issue includes "thin_service_pages" or service_page_count below niche norm
+  weak_website_conversion: 15    # obvious_website_issue includes a conversion-flow issue
+  clear_competitor_gap: 10       # competitor_gap is non-empty / truthy
+  low_moderate_reviews: 10       # review_count below market competitor benchmark (see data/markets)
+  high_value_niche: 10           # niche.high_value == true in niches.yaml
+  verified_business: 5           # verified_business == true
+  public_contact_discoverable: 5 # a public phone/email/contact form was found
+
+penalties:
+  already_dominant: -30          # maps_position <= 3 AND organic_position <= 4 AND rating >= 4.7 AND review_count high for market
+
+# Hard rejects — evaluated first, independent of the point total above.
+# If ANY of these are true, status becomes REJECTED and no weights are scored.
+reject_if:
+  broken_or_non_legitimate: true   # obvious_website_issue == "site_down" or verified_business == false and no other verification signal
+  no_commercial_intent: true       # commercial_value_signal == "none"
+
+thresholds:
+  qualified_min: 70      # score >= 70 -> QUALIFIED (quick audit eligible)
+  manual_review_min: 55  # 55 <= score < 70 -> MANUAL_REVIEW (human decides)
+  # score < manual_review_min -> REJECTED, no AI spend
+
+# Market-relative comparisons (low_moderate_reviews, clear_competitor_gap,
+# already_dominant) are resolved by looking up data/markets/<niche>-<city>-<state>/
+# when it exists. If no market file exists yet, these signals fall back to the
+# prospect's own obvious_gbp_issue / competitor_gap fields as reported at discovery.
+
+# ============================================================================
+# V3.1 ADDITIONS (additive only -- everything above this line is V2 and its
+# semantics/behavior are UNCHANGED. `weights`/`thresholds`/`score`/
+# `confirmed_score`/`potential_score` still mean exactly what they meant in
+# V2. FIT and GAP below are a SEPARATE pair of axes computed by
+# scripts/assess_commercial_fit.py and scripts/assess_google_gap.py, used
+# only by `qualify_leads.py --v3`. Running the V2 pipeline (no --v3 flag)
+# never reads this section at all.
+# ============================================================================
+
+# FIT answers "would this be a commercially attractive client?" -- NOT "is
+# their SEO bad?". A business can have terrible SEO and score low on FIT if
+# it shows no sign of being able/willing to pay or being reachable.
+fit_weights:
+  niche_economics: 20        # niche tier from niches.yaml: tier 1=20, tier 2=13, tier 3=7 (scaled, see assess_commercial_fit.py)
+  business_maturity: 20      # reviews, years in business, multi-location/multi-provider, professional site, active ops
+  buying_intent: 30          # from assess_buying_signals.py -- the single largest FIT component, deliberately
+  contactability: 15         # from check_contactability.py's contactability_score (0-2, scaled to 0-15)
+  market_attractiveness: 15  # from market.json -- competitive density, whether the market is franchise-dominated
+
+fit_thresholds:
+  reject_max: 29        # fit_confirmed_score <= 29 -> REJECTED, no further V3.1 work
+  manual_review_max: 39 # 30-39 -> MANUAL_REVIEW (borderline commercial fit, human judgment, not GAP-blocked)
+  qualified_min: 40     # >= 40 -> eligible for QUALIFIED/HIGH_PRIORITY (still needs GAP >= gap_thresholds.qualified_min)
+  high_priority_min: 65 # additional HIGH_PRIORITY gate, see limits.yaml
+
+# GAP answers "is there a defensible Google/local acquisition opportunity
+# here?" -- computed with the SAME confirmed/potential/completeness
+# discipline as V2: unknown ranking data is never scored as poor ranking.
+gap_weights:
+  maps_gbp_opportunity: 25
+  organic_visibility_opportunity: 20
+  service_architecture: 20
+  gbp_review_gap: 15
+  technical_indexation: 10
+  competitor_gap: 10
+
+gap_thresholds:
+  qualified_min: 40  # gap_confirmed_score >= 40 required for QUALIFIED (alongside fit_thresholds.qualified_min)
+  high_priority_min: 50
+
+# Niche tier -> niche_economics points (out of fit_weights.niche_economics).
+# Tiers themselves live in niches.yaml (tier: 1/2/3) so adding a niche never
+# requires a code or scoring.yaml change -- only this lookup table maps tier
+# number to points, and it rarely needs to change.
+niche_tier_points:
+  1: 20
+  2: 13
+  3: 7

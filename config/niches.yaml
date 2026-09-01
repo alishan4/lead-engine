@@ -1,0 +1,195 @@
+# Niches this engine targets for outreach.
+# high_value: true niches get a scoring bonus (see scoring.yaml: high_value_niche) -- V2 field, unchanged.
+# tier: 1/2/3 is the V3.1 commercial-fit axis (config/scoring.yaml: fit_weights.niche_economics).
+#   TIER 1 = highest customer-economics x local-search-dependence combination
+#            (restoration, storm/replacement roofing, replacement HVAC, foundation repair)
+#   TIER 2 = high ticket, moderate-to-low outreach saturation
+#            (family/immigration/estate law, dental implants, high-value plumbing)
+#   TIER 3 = opportunistic -- high ticket but high outreach saturation (PI, criminal/DUI,
+#            saturated legal markets). NOT bad leads automatically -- they simply require
+#            stronger buying/readiness signals to justify contact (see assess_buying_signals.py).
+# Add a new niche by adding an entry here -- no code changes required for either axis.
+
+niches:
+  family_law:
+    label: "Family / Divorce Law"
+    high_value: true
+    tier: 2
+    money_keywords:
+      - "divorce lawyer"
+      - "child custody attorney"
+      - "family law attorney"
+    typical_service_pages:
+      - divorce
+      - child-custody
+      - child-support
+      - alimony
+      - prenuptial-agreements
+      - mediation
+
+  immigration_law:
+    label: "Immigration Law"
+    high_value: true
+    tier: 2
+    money_keywords:
+      - "immigration lawyer"
+      - "green card attorney"
+      - "visa lawyer"
+      - "deportation defense attorney"
+    typical_service_pages:
+      - green-cards
+      - visas
+      - citizenship
+      - deportation-defense
+      - asylum
+
+  estate_law:
+    label: "Estate / Elder Law"
+    high_value: true
+    tier: 2  # experimental -- low outreach saturation, high per-client value, thinner data on ticket size than the others
+    money_keywords:
+      - "estate planning attorney"
+      - "elder law attorney"
+      - "probate lawyer"
+      - "trust attorney"
+    typical_service_pages:
+      - estate-planning
+      - wills-and-trusts
+      - probate
+      - elder-law
+      - medicaid-planning
+
+  personal_injury:
+    label: "Personal Injury"
+    high_value: true
+    tier: 3  # high ticket, but the most heavily cold-marketed legal vertical in the US -- requires strong buying signals
+    money_keywords:
+      - "personal injury lawyer"
+      - "car accident attorney"
+      - "slip and fall lawyer"
+    typical_service_pages:
+      - car-accidents
+      - slip-and-fall
+      - wrongful-death
+      - workers-compensation
+
+  criminal_defense:
+    label: "Criminal Defense / DUI"
+    high_value: true
+    tier: 3  # same saturation caveat as personal_injury
+    money_keywords:
+      - "criminal defense lawyer"
+      - "dui attorney"
+      - "criminal defense attorney"
+    typical_service_pages:
+      - dui-defense
+      - felony-defense
+      - misdemeanor-defense
+      - expungement
+
+  hvac:
+    label: "HVAC"
+    high_value: true
+    tier: 1
+    money_keywords:
+      - "ac repair"
+      - "furnace repair"
+      - "hvac installation"
+      - "emergency ac repair"
+    typical_service_pages:
+      - ac-repair
+      - heating-repair
+      - installation
+      - maintenance-plans
+      - emergency-service
+
+  roofing:
+    label: "Roofing"
+    high_value: true
+    tier: 1
+    money_keywords:
+      - "roof replacement"
+      - "roof repair"
+      - "roofing contractor"
+      - "emergency roof repair"
+    typical_service_pages:
+      - roof-replacement
+      - roof-repair
+      - storm-damage
+      - roof-inspection
+      - commercial-roofing
+
+  restoration:
+    label: "Restoration (Water/Fire/Mold)"
+    high_value: true
+    tier: 1
+    money_keywords:
+      - "water damage restoration"
+      - "fire damage restoration"
+      - "mold remediation"
+      - "24 hour water damage"
+    typical_service_pages:
+      - water-damage-restoration
+      - fire-damage-restoration
+      - mold-remediation
+      - storm-damage
+      - emergency-services
+
+  foundation_repair:
+    label: "Foundation Repair / Waterproofing"
+    high_value: true
+    tier: 1
+    money_keywords:
+      - "foundation repair"
+      - "basement waterproofing"
+      - "crawl space repair"
+      - "foundation crack repair"
+    typical_service_pages:
+      - foundation-repair
+      - waterproofing
+      - crawl-space-repair
+      - concrete-leveling
+
+  plumbing:
+    label: "Plumbing"
+    high_value: true
+    tier: 2  # tier 1 only for the high-ticket sub-lines (repiping/sewer); see typical_service_pages
+    money_keywords:
+      - "emergency plumber"
+      - "drain cleaning"
+      - "water heater repair"
+      - "plumber near me"
+      - "repiping"
+      - "sewer line repair"
+    typical_service_pages:
+      - emergency-plumbing
+      - drain-cleaning
+      - water-heater-repair-installation
+      - repiping
+      - sewer-line-repair
+
+  dentistry:
+    label: "Dentistry / Emergency Dentistry"
+    high_value: true
+    tier: 2
+    money_keywords:
+      - "emergency dentist"
+      - "dental implants"
+      - "cosmetic dentist"
+      - "same day dentist"
+      - "full arch dental implants"
+      - "all-on-4"
+    typical_service_pages:
+      - emergency-dentistry
+      - dental-implants
+      - full-arch-implants
+      - cosmetic-dentistry
+      - invisalign
+      - general-dentistry
+
+  other_high_value_local:
+    label: "Other High-Value Local Service"
+    high_value: false # set true per-lead override if commercial_value_signal supports it
+    tier: 3
+    money_keywords: []
+    typical_service_pages: []

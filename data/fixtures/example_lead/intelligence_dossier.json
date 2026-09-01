@@ -1,0 +1,17 @@
+{
+  "business": {"name": "Example Roofing Co.", "niche": "roofing", "city": "Exampleville", "state": "EX", "website": "https://example-roofing.test/"},
+  "market": {"market_id": "roofing-exampleville-ex", "top_competitors": ["Rival Roofing Exampleville"], "review_benchmark": 4.6},
+  "qualification": {
+    "fit": {"confirmed": 62, "potential": 90, "completeness": 80},
+    "gap": {"confirmed": 48, "potential": 70, "completeness": 75},
+    "buying_signals": ["new_location"]
+  },
+  "primary_wedge": {"opportunity_type": "COMPETITOR_GAP", "confidence": 0.8},
+  "competitor_context": ["Rival Roofing Exampleville"],
+  "decision_maker_context": {"likely_contact_role": "owner", "contactability_score": 2, "note": "Not a verified contact -- contact_identity.py still required before any outreach."},
+  "contactability": {"score": 2, "status_at_dossier_time": "OPPORTUNITY_IDENTIFIED"},
+  "sources": ["market.json top_competitors cache"],
+  "observed_at": "2026-01-15T09:06:00+00:00",
+  "limitations": ["gap_missing_fields: ['gbp_review_count']"],
+  "cost_metrics": {"agents_used": 0, "pages_fetched": 4}
+}

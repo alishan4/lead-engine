@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ranking_snapshot.schema.json",
+  "title": "RankingSnapshot",
+  "description": "One normalized ranking data row, produced by scripts/import_rankings.py from a Semrush export, a manually-prepared CSV, a JSON snapshot, or a hand-transcribed real report/search-result observation. Stored at data/rankings/<market_id>.csv. This is the internal representation every import source is normalized into. `source` records PROVENANCE (where the fact ultimately came from), independent of the mechanical import path -- a human typing up numbers read off a real Semrush report is 'semrush' data, not a guess, even though it arrives via the manual-CSV code path.",
+  "type": "object",
+  "required": [
+    "market_id", "business_name", "domain", "keyword", "organic_position",
+    "maps_position", "source", "observed_at", "exact_rank_verified"
+  ],
+  "properties": {
+    "market_id": {"type": "string", "description": "e.g. hvac-nashville-tn -- matches data/markets/<market_id>/"},
+    "business_name": {"type": ["string", "null"]},
+    "domain": {"type": ["string", "null"]},
+    "keyword": {"type": ["string", "null"], "description": "Null/ambiguous is fine (and required) when the underlying query combined multiple phrases -- do not force a single keyword string onto blended evidence"},
+    "search_volume": {"type": ["integer", "null"]},
+    "cpc": {"type": ["number", "null"]},
+    "kd": {"type": ["number", "null"], "description": "Keyword difficulty, 0-100"},
+    "organic_position": {"type": ["integer", "null"], "description": "Exact tracked position. Must stay null for an absence/'not present in captured results' observation -- never approximate it as some number just outside the captured range (e.g. do not write 11, 21, 50 for 'not seen in top 10/20/50')"},
+    "ranking_url": {"type": ["string", "null"]},
+    "maps_position": {"type": ["integer", "null"], "description": "Same null-for-absence rule as organic_position"},
+    "serp_features": {"type": ["string", "null"], "description": "Comma-separated, e.g. 'local_pack,featured_snippet'"},
+    "competitor_names": {"type": ["string", "null"], "description": "Comma-separated names visible in the same SERP -- only names actually confirmed present in THIS capture, not names carried over from unrelated prior research"},
+    "source": {
+      "type": "string",
+      "enum": ["semrush_csv", "manual_csv", "json_snapshot", "semrush", "google_local_capture"],
+      "description": "semrush_csv/json_snapshot/manual_csv describe the mechanical import path; semrush/google_local_capture (set via import_rankings.py --source-override) record the true external provenance of hand-transcribed real data"
+    },
+    "observed_at": {"type": "string", "format": "date-time", "description": "When the underlying report/search was actually generated/captured -- not necessarily when it was imported into this file"},
+    "exact_rank_verified": {
+      "type": "boolean",
+      "description": "true only if organic_position/maps_position is a real, exact tracked rank. false for an absence observation ('not present in the captured result set') or any case where the query/capture was ambiguous enough that no specific integer position is defensible -- rescore_leads.py and the scorer must never treat a false here as license to guess a number."
+    },
+    "notes": {"type": ["string", "null"], "description": "Free-text context that doesn't fit a structured field -- e.g. an aggregate keyword-footprint summary, or why exact_rank_verified is false"}
+  }
+}

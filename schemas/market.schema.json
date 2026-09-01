@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "market.schema.json",
+  "title": "Market",
+  "description": "Reusable competitor/ranking intelligence for one niche+city, at data/markets/<market_id>/market.json. Populated at discovery time from WebSearch and expanded by scripts/enrich_market.py from imported ranking data (config/routing.yaml's paid specialists are never required to build this). Reused across every lead in the same market -- never rediscover the same top-3 competitors per company.",
+  "type": "object",
+  "required": ["niche", "city", "state", "target_keywords", "top_competitors", "last_updated", "source_notes"],
+  "properties": {
+    "niche": {"type": "string"},
+    "city": {"type": "string"},
+    "state": {"type": "string"},
+    "target_keywords": {"type": "array", "items": {"type": "string"}},
+    "top_competitors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "url": {"type": ["string", "null"]},
+          "website": {"type": ["string", "null"]},
+          "rating": {"type": ["number", "null"]},
+          "review_count": {"type": ["integer", "null"]},
+          "notes": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "top_organic_competitors": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Domains/names ranked #1-3 organic for the market's primary money keyword, per the latest ranking import"
+    },
+    "top_maps_competitors": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Names ranked #1-3 in the local pack for the market's primary money keyword, per the latest ranking import"
+    },
+    "ranking_urls": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Specific competitor page URLs observed ranking, useful as dossier evidence sources"
+    },
+    "search_volume": {"type": ["object", "null"], "description": "keyword -> monthly search volume, from ranking imports"},
+    "cpc": {"type": ["object", "null"], "description": "keyword -> CPC, from ranking imports"},
+    "kd": {"type": ["object", "null"], "description": "keyword -> keyword difficulty, from ranking imports"},
+    "serp_notes": {"type": ["string", "null"]},
+    "review_benchmarks": {
+      "type": ["object", "null"],
+      "properties": {
+        "median_top3": {"type": ["number", "null"]},
+        "basis": {"type": ["string", "null"]}
+      }
+    },
+    "common_service_architecture": {"type": ["array", "null"], "items": {"type": "string"}},
+    "source": {
+      "type": ["string", "null"],
+      "description": "e.g. websearch, semrush_csv, manual_csv -- set/updated by scripts/enrich_market.py when ranking data is imported"
+    },
+    "last_updated": {"type": "string", "format": "date"},
+    "observed_at": {"type": ["string", "null"], "format": "date-time"},
+    "source_notes": {"type": "string"}
+  }
+}

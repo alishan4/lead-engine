@@ -1,0 +1,127 @@
+# V3.3 outreach-execution configuration. Every threshold/window/ceiling here
+# is an explicit, editable operating rule -- never hardcoded in scripts.
+# Nothing in this file changes FIT/GAP/buying-signal/HIGH_PRIORITY/wedge/
+# dossier/asset logic (frozen, see config/scoring.yaml etc.).
+
+# ----------------------------------------------------------------------------
+# Contact identity (separate from mailbox validation, see below).
+# ----------------------------------------------------------------------------
+identity:
+  min_identity_confidence: 0.75
+  # Evidence hierarchy, highest trust first -- mirrors schemas/contact_record's
+  # identity_sources. A source not on this list can still be recorded but
+  # cannot alone clear min_identity_confidence.
+  acceptable_source_types:
+    - official_website_team_page
+    - official_company_document
+    - named_person_email_published_by_company
+    - licensing_or_government_evidence
+    - credible_third_party_evidence
+  # Patterns that can NEVER be inferred as identity evidence merely from a
+  # domain -- these must be independently, explicitly verified as displayed
+  # somewhere, exactly like V2's verify_contact.py NEVER_VERIFIED_SOURCE_TYPES.
+  never_infer_local_parts: ["info", "hello", "support", "contact", "admin", "sales", "office"]
+  role_priority: [owner, founder, partner, managing_attorney, office_manager,
+                   marketing_lead, growth_lead, operations_manager, practice_manager, company_inbox]
+
+# ----------------------------------------------------------------------------
+# Mailbox deliverability validation -- a SEPARATE axis from identity. No
+# active SMTP probing is implemented (unsafe/abusive) -- mailbox_status stays
+# UNKNOWN unless a real, already-available signal (e.g. a prior bounce
+# record, or an imported deliverability check) sets it otherwise.
+# ----------------------------------------------------------------------------
+mailbox:
+  states: [UNKNOWN, VALID, RISKY, INVALID]
+  invalid_triggers_reverify: true
+  risky_requires_manual_review: true
+  # UNKNOWN never invalidates an otherwise-verified identity by itself.
+
+# ----------------------------------------------------------------------------
+# Email generation contract.
+# ----------------------------------------------------------------------------
+email:
+  target_word_count_min: 80
+  target_word_count_max: 120
+  word_count_hard_ceiling: 160  # soft target per spec; this is the real QA failure line
+  forbidden_phrases:
+    - "seo services"
+    - "boost rankings"
+    - "increase traffic"
+    - "top 3"
+    - "seo audit"
+    - "we help businesses grow"
+    - "i noticed your seo"
+    - "guaranteed"
+    - "guarantee"
+    - "act now"
+    - "limited time"
+    - "don't miss out"
+    - "today only"
+    - "hurry"
+
+# ----------------------------------------------------------------------------
+# QA gate.
+# ----------------------------------------------------------------------------
+qa:
+  min_specificity_markers: 1  # company-swap proxy, reuses V3.2's passes_company_swap_test
+
+# ----------------------------------------------------------------------------
+# Send window planner. Heuristics, not claimed statistically optimal.
+# ----------------------------------------------------------------------------
+send_window:
+  allowed_days: [Tuesday, Wednesday, Thursday, Friday]
+  professional_niches: [family_law, immigration_law, estate_law, personal_injury,
+                          criminal_defense, dentistry]
+  professional_window: ["08:30", "09:30"]
+  home_service_window: ["07:00", "08:30"]
+  default_window: ["08:30", "09:30"]
+  pkt_timezone: "Asia/Karachi"
+
+# ----------------------------------------------------------------------------
+# Sending volume -- a ceiling, never a quota. 0 sends is always valid.
+# ----------------------------------------------------------------------------
+volume:
+  daily_ceiling_initial: 5     # 3-5/day during early validation
+  daily_ceiling_stage_2: 10    # 8-10/day, only after clean delivery + reply data
+  daily_ceiling_stage_3: 15    # 10-15/day, later still
+  current_stage: 1             # which ceiling is actually active right now
+
+# ----------------------------------------------------------------------------
+# Deliverability health / circuit breaker. Minimum sample size prevents an
+# unstable percentage from a tiny batch triggering a pause.
+# ----------------------------------------------------------------------------
+deliverability:
+  min_sample_for_rate_rules: 20
+  hard_bounce_warn_rate: 0.03
+  hard_bounce_pause_rate: 0.05
+  abuse_complaint_triggers_immediate_pause: true
+
+# ----------------------------------------------------------------------------
+# Follow-up sequence -- day offsets from Day 0 (first send). Each touch must
+# add new value; "just checking in" is never generated.
+# ----------------------------------------------------------------------------
+follow_up:
+  day_offsets: [0, 3, 9, 19]  # Day 0, Day 3-4, Day 8-10, Day 18-21 (midpoints)
+  max_touches: 4              # Day 0 + 3 follow-ups, then STOP
+
+# ----------------------------------------------------------------------------
+# Recycle policy -- time alone is never sufficient.
+# ----------------------------------------------------------------------------
+recycle:
+  min_days_elapsed: 150
+  requires_new_trigger: true
+  valid_trigger_signal_types: [new_location, recent_expansion, new_high_value_service,
+                                 marketing_hiring_signal, recent_site_investment, runs_google_ads, runs_lsa]
+
+# ----------------------------------------------------------------------------
+# Suppression reasons -- config, not scattered magic strings.
+# ----------------------------------------------------------------------------
+suppression_reasons:
+  - BOUNCE
+  - INVALID_EMAIL
+  - UNSUBSCRIBE
+  - DO_NOT_CONTACT
+  - NEGATIVE_REPLY
+  - ABUSE_COMPLAINT
+  - DUPLICATE_ACCOUNT
+  - MANUAL_SUPPRESSION

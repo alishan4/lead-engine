@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "qualification_v3.schema.json",
+  "title": "QualificationV3",
+  "description": "Rich, evidence-backed V3.1 qualification artifact for one prospect, stored at data/leads/<slug>/qualification_v3.json. The prospect record (schemas/prospect.schema.json) carries the flat scalar summary fields used for filtering/routing; this file carries the full breakdown + evidence trail behind them. Produced by scripts/check_franchise.py, assess_buying_signals.py, check_contactability.py, assess_google_gap.py, assess_commercial_fit.py, and finalized by qualify_leads.py --v3.",
+  "type": "object",
+  "required": [
+    "prospect_id", "franchise", "fit", "gap", "buying_signals",
+    "contactability", "routing", "generated_at"
+  ],
+  "properties": {
+    "prospect_id": {"type": "string"},
+    "franchise": {
+      "type": "object",
+      "properties": {
+        "possible_franchise": {"type": ["boolean", "null"]},
+        "corporate_marketing_controlled": {"type": ["boolean", "null"]},
+        "lead_gen_network": {"type": ["boolean", "null"]},
+        "blocklist_match": {"type": ["string", "null"], "description": "the matched entry from config/franchise_blocklist.yaml, if any"},
+        "research_escalated": {"type": "boolean", "description": "true if a reasoning pass ran beyond the free blocklist check"},
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "fit": {
+      "type": "object",
+      "properties": {
+        "confirmed_score": {"type": ["integer", "null"]},
+        "potential_score": {"type": ["integer", "null"]},
+        "completeness": {"type": ["integer", "null"]},
+        "missing_fields": {"type": "array", "items": {"type": "string"}},
+        "breakdown": {
+          "type": "object",
+          "properties": {
+            "niche_economics": {"type": ["integer", "null"]},
+            "business_maturity": {"type": ["integer", "null"]},
+            "buying_intent": {"type": ["integer", "null"]},
+            "contactability": {"type": ["integer", "null"]},
+            "market_attractiveness": {"type": ["integer", "null"]}
+          }
+        },
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "gap": {
+      "type": "object",
+      "properties": {
+        "confirmed_score": {"type": ["integer", "null"]},
+        "potential_score": {"type": ["integer", "null"]},
+        "completeness": {"type": ["integer", "null"]},
+        "missing_fields": {"type": "array", "items": {"type": "string"}},
+        "breakdown": {
+          "type": "object",
+          "properties": {
+            "maps_gbp_opportunity": {"type": ["integer", "null"]},
+            "organic_visibility_opportunity": {"type": ["integer", "null"]},
+            "service_architecture": {"type": ["integer", "null"]},
+            "gbp_review_gap": {"type": ["integer", "null"]},
+            "technical_indexation": {"type": ["integer", "null"]},
+            "competitor_gap": {"type": ["integer", "null"]}
+          }
+        },
+        "gap_type": {"type": ["string", "null"], "enum": ["MAPS", "WEBSITE_SEO", "BOTH", "UNKNOWN", null]},
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "buying_signals": {
+      "description": "V3.1.1: resolved flat values (as consumed by score_leads.score_fit) plus the per-signal confidence tier and resolution status behind each one. The raw SignalEvidence trail itself lives separately at data/leads/<slug>/buying_signal_evidence.jsonl (append-only) -- this object is the resolved summary, not the evidence store.",
+      "type": "object",
+      "properties": {
+        "runs_google_ads": {"type": ["boolean", "null"]},
+        "runs_lsa": {"type": ["boolean", "null"]},
+        "paid_search_organic_gap": {"type": ["boolean", "null"], "description": "always derived from runs_google_ads/runs_lsa + verified organic_position, never independently evidenced"},
+        "recent_expansion": {"type": ["boolean", "null"]},
+        "new_location": {"type": ["boolean", "null"]},
+        "marketing_hiring_signal": {"type": ["boolean", "null"]},
+        "review_velocity_signal": {"type": ["string", "null"], "enum": ["STRONG", "MODERATE", "LOW", null]},
+        "recent_site_investment": {"type": ["boolean", "null"]},
+        "new_high_value_service": {"type": ["boolean", "null"]},
+        "multiple_locations": {"type": ["boolean", "null"]},
+        "tiers": {"type": "object", "description": "signal_type -> STRONG_VERIFIED/VERIFIED/WEAK/UNUSABLE/null"},
+        "resolution_status": {"type": "object", "description": "signal_type -> RESOLVED/CONFLICTED/STALE_ONLY/NO_EVIDENCE/ENTITY_REJECTED"},
+        "conflicts": {"type": "array", "items": {"type": "string"}, "description": "signal_types currently CONFLICTED -- unresolved until a human reconciles"},
+        "evidence_count": {"type": ["integer", "null"], "description": "total raw SignalEvidence items on file for this business, across all signal_types"},
+        "resolved_at": {"type": ["string", "null"], "format": "date-time"}
+      }
+    },
+    "contactability": {
+      "type": "object",
+      "properties": {
+        "contactability_score": {"type": ["integer", "null"]},
+        "named_owner_found": {"type": ["boolean", "null"]},
+        "named_marketing_contact_found": {"type": ["boolean", "null"]},
+        "named_ops_contact_found": {"type": ["boolean", "null"]},
+        "official_email_visible": {"type": ["boolean", "null"]},
+        "official_contact_form_available": {"type": ["boolean", "null"]},
+        "likely_contact_role": {"type": ["string", "null"]},
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "why_now_object": {
+      "type": "object",
+      "properties": {
+        "why_this_company": {"type": ["string", "null"]},
+        "why_this_problem": {"type": ["string", "null"]},
+        "why_now": {"type": ["string", "null"]},
+        "why_likely_buyer": {"type": ["string", "null"]}
+      }
+    },
+    "routing": {
+      "type": "object",
+      "properties": {
+        "status": {"type": "string"},
+        "reason": {"type": "string"},
+        "expensive_audit_permitted": {"type": "boolean"}
+      }
+    },
+    "generated_at": {"type": "string", "format": "date-time"}
+  }
+}

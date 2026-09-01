@@ -1,0 +1,12 @@
+{
+  "prospect_id": "roofing-exampleville-ex-example-roofing-co",
+  "subject": "Quick note on Example Roofing Co. and the competitor gap I noticed",
+  "body": "Hi,\n\nRival Roofing Exampleville ranks #1 for 'emergency roof repair exampleville' and Example Roofing Co. does not appear in the top 10 for that term.\n\nThat's real search volume going to a name your prospects already recognize as a competitor, not to you.\n\nI put together a quick 3-point comparison against them if useful -- no obligation either way, just flagging something specific to Example Roofing Co. rather than a generic pitch.\n\nAli",
+  "word_count": 66,
+  "recipient_channel": {"type": "COMPANY_EMAIL", "address_or_url": "office@example-roofing.test"},
+  "sender_name": "Ali",
+  "opportunity_type": "COMPETITOR_GAP",
+  "asset_type": "THREE_POINT_COMPARISON",
+  "content_hash": "example0000000000",
+  "generated_at": "2026-01-15T09:12:00+00:00"
+}

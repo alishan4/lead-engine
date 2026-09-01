@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "opportunity_candidate.schema.json",
+  "title": "OpportunityCandidate",
+  "description": "One candidate commercial-opportunity, produced by the V3.2 deterministic scan (scripts/run_deterministic_scan.py) or confirmed/added by a specialist (scripts/route_to_specialist.py). Multiple candidates may exist per prospect; exactly one is ever promoted to primary_wedge (schemas/primary_wedge.schema.json) via scripts/wedge_selection.py. A candidate is never created merely because a check failed -- it must have a real commercial-relevance rationale.",
+  "type": "object",
+  "required": ["type", "statement", "evidence", "confidence", "commercial_relevance", "specificity", "actionability", "requires_specialist"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "MAPS_GAP", "ORGANIC_VISIBILITY_GAP", "SERVICE_ARCHITECTURE_GAP",
+        "PRACTICE_AREA_GAP", "COMPETITOR_GAP", "GBP_GAP", "REVIEW_GAP",
+        "ENTITY_NAP_GAP", "TECHNICAL_INDEXATION_GAP", "SCHEMA_GAP",
+        "CONVERSION_GAP", "PAID_OWNED_VISIBILITY_GAP", "LOCAL_AUTHORITY_GAP",
+        "NO_CLEAR_OPPORTUNITY"
+      ]
+    },
+    "statement": {"type": "string", "description": "One sentence, specific, checkable -- not a generic category description"},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["statement", "source"],
+        "properties": {
+          "statement": {"type": "string"},
+          "source": {"type": ["string", "null"]},
+          "source_type": {"type": ["string", "null"], "enum": ["deterministic_page_fetch", "market_cache", "buying_signal_evidence", "ranking_import", "specialist_finding", "review_snapshot", null]},
+          "observed_at": {"type": ["string", "null"], "format": "date-time"}
+        }
+      }
+    },
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "commercial_relevance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Would a real owner care about this, independent of how technically severe it is"},
+    "specificity": {"type": "number", "minimum": 0, "maximum": 1, "description": "How prospect-specific this observation is -- see the company-swap test, scripts/wedge_selection.py"},
+    "actionability": {"type": "number", "minimum": 0, "maximum": 1, "description": "How clear and concrete a free first action is for this opportunity -- feeds wedge scoring's actionability component"},
+    "requires_specialist": {"type": "boolean", "description": "true if this candidate needs interpretive judgment beyond what the deterministic scan itself can conclude"},
+    "source_stage": {"type": ["string", "null"], "enum": ["deterministic_scan", "specialist", null]}
+  }
+}

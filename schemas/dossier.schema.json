@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "dossier.schema.json",
+  "title": "Dossier",
+  "description": "One compact, final research artifact per approved lead, stored at data/leads/<slug>/dossier.json. Downstream steps (email generation, QA) read ONLY this file — never re-audit the site or re-run agents to answer a question this file already answers. V2: `evidence_items[]` is the authoritative evidence list carried forward from opportunity.json -- email generation may only cite facts backed by an item here. `evidence` (string) is kept as a short human-readable summary for V1 compatibility.",
+  "type": "object",
+  "required": [
+    "business", "city", "state", "niche", "website", "maps_position",
+    "organic_position", "rating", "reviews", "money_keyword",
+    "problem_type", "strongest_finding", "evidence", "evidence_items",
+    "business_impact", "free_value", "competitors", "confidence",
+    "contact_verified", "sources", "observed_at"
+  ],
+  "properties": {
+    "business": {"type": "string"},
+    "city": {"type": "string"},
+    "state": {"type": ["string", "null"]},
+    "niche": {"type": "string"},
+    "website": {"type": ["string", "null"]},
+    "maps_position": {"type": ["integer", "null"]},
+    "organic_position": {"type": ["integer", "null"]},
+    "rating": {"type": ["number", "null"]},
+    "reviews": {"type": ["integer", "null"]},
+    "money_keyword": {"type": "string"},
+    "problem_type": {"type": "string"},
+    "strongest_finding": {"type": "string"},
+    "evidence": {"type": "string", "description": "Short human-readable summary (V1 compatibility)"},
+    "evidence_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "statement": {"type": "string"},
+          "source_url": {"type": ["string", "null"]},
+          "source_reference": {"type": ["string", "null"]},
+          "observed_at": {"type": "string", "format": "date-time"},
+          "evidence_type": {"type": "string"}
+        }
+      },
+      "description": "Carried forward from opportunity.json's evidence[] -- the only facts email generation may cite"
+    },
+    "business_impact": {"type": "string"},
+    "free_value": {"type": "string"},
+    "competitors": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "contact_verified": {"type": "boolean"},
+    "sources": {"type": "array", "items": {"type": "string"}},
+    "agents_used": {"type": "array", "items": {"type": "string"}},
+    "pages_checked": {"type": ["array", "null"], "items": {"type": "string"}},
+    "observed_at": {"type": "string", "format": "date-time", "description": "When the strongest finding was observed -- checked against config/limits.yaml: finding_freshness_days before email generation (scripts/check_freshness.py)"},
+    "ranking_observed_at": {"type": ["string", "null"], "format": "date-time", "description": "observed_at of the ranking data backing maps_position/organic_position, if any -- checked against ranking_freshness_days"},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}
