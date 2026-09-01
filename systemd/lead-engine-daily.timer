@@ -1,0 +1,24 @@
+[Unit]
+Description=Run Lead Engine daily orchestration Tue-Fri at 12:00 PM Asia/Karachi
+
+[Timer]
+# The timezone is specified INLINE in the calendar expression itself, not
+# inherited from the machine's configured local timezone or $TZ. This is
+# deliberate: systemd's OnCalendar timers otherwise fire against whatever
+# timezone the machine happens to be set to, which can silently change
+# (e.g. `timedatectl set-timezone`) or differ across machines this unit
+# is ever copied to. Pinning "Asia/Karachi" here means the schedule below
+# fires at noon Karachi time regardless of the host's own timezone.
+#
+# Verify at any time with:
+#   systemd-analyze calendar --iterations=5 'Tue,Wed,Thu,Fri 12:00:00 Asia/Karachi'
+# and cross-check the printed UTC-equivalent times by hand.
+OnCalendar=Tue,Wed,Thu,Fri 12:00:00 Asia/Karachi
+AccuracySec=1min
+# Deliberately NOT persistent: if the machine is off/asleep at the
+# scheduled moment, we do not want a surprise catch-up run firing at an
+# arbitrary later time outside the intended Tue-Fri midday window.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

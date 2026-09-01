@@ -1,0 +1,16 @@
+[Unit]
+Description=Lead Engine daily orchestration (deterministic pipeline stages only; never sends email)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/user/Development/experiments/lead-engine
+ExecStart=/home/user/Development/experiments/lead-engine/scripts/run_daily.sh
+# Belt-and-suspenders on top of the script's own flock: systemd will also
+# refuse to start a second instance of this unit while one is still running.
+# (This only protects against a second *systemd-triggered* start; the
+# script's own flock in run_daily.sh is what protects against a manual
+# invocation racing a scheduled one.)
+TimeoutStartSec=600
+Nice=10
