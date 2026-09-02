@@ -340,7 +340,15 @@ def main():
         "run_already_active": False,
     }
     if acquisition_stats:
-        summary.update({k: v for k, v in acquisition_stats.items() if k != "limitations"})
+        # Exclude keys this block above already computed AFTER the full
+        # pipeline (including qualify_leads.py --v3, which the acquisition
+        # worker itself runs before) -- acquisition_stats' own values for
+        # these are a stale snapshot from before routing happened and would
+        # silently clobber the correct final counts otherwise (e.g. a lead
+        # ROUTED to REJECTED by qualify_leads never shows up in
+        # acquisition_stats["rejected"], since that tally ran first).
+        SUPERSEDED_BY_FINAL_TALLY = {"limitations", "qualified", "high_priority", "rejected", "needs_enrichment"}
+        summary.update({k: v for k, v in acquisition_stats.items() if k not in SUPERSEDED_BY_FINAL_TALLY})
 
     out_name = f"DRY-RUN-{run_id}.json" if args.dry_run else f"{today_key()}.json"
     out_path = DAILY_RUNS_DIR / out_name

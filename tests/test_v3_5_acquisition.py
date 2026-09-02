@@ -511,6 +511,21 @@ class TestDailySummaryFields(unittest.TestCase):
         for field in self.REQUIRED_FIELDS:
             self.assertIn(f'"{field}"', text, f"run_daily.py summary is missing required V3.5 field: {field}")
 
+    def test_acquisition_stats_merge_never_clobbers_post_routing_final_tally(self):
+        """Regression test: acquisition_worker's own qualified/high_priority/
+        rejected/needs_enrichment counters are a snapshot taken BEFORE
+        qualify_leads.py --v3 has run (the acquisition worker runs first).
+        run_daily.py's merge of acquisition_stats into its own summary dict
+        must exclude these 4 keys, or a lead ROUTED to e.g. REJECTED this
+        run would silently read back as 0 in the final summary -- caught
+        live on 2026-09-02's real same-day catch-up run before this fix."""
+        text = (SCRIPTS / "run_daily.py").read_text()
+        self.assertIn("SUPERSEDED_BY_FINAL_TALLY", text)
+        for field in ("qualified", "high_priority", "rejected", "needs_enrichment"):
+            self.assertIn(f'"{field}"', text)
+        # the merge line itself must reference the exclusion set, not a bare acquisition_stats.items()
+        self.assertRegex(text, r"acquisition_stats\.items\(\)\s+if\s+k\s+not in\s+SUPERSEDED_BY_FINAL_TALLY")
+
     def test_counters_class_covers_the_per_run_metrics(self):
         for field in ("pending_leads_processed", "fresh_candidates_discovered", "businesses_verified",
                       "fit_scored", "gap_scored", "buying_signals_verified", "needs_enrichment",
