@@ -149,7 +149,15 @@ def preflight():
     into a fail-closed CLAUDE_AUTH_REQUIRED result."""
     reply = run_claude(
         "Reply only AUTH_OK, nothing else.",
-        json_schema=None, timeout_s=45, max_budget_usd=0.05,
+        # $0.05 was too tight in production: observed real cost for this
+        # exact call ranged $0.024-$0.072 depending on how much extended
+        # thinking the model used for reading the policy preamble + two
+        # files, causing a real, authenticated call to spuriously abort
+        # with error_max_budget_usd and get reported as CLAUDE_AUTH_REQUIRED
+        # -- a false trip, not an actual auth problem (caught in production
+        # on 2026-09-02's second acquisition pass). $0.25 leaves real margin
+        # while still acting as a genuine runaway-cost circuit breaker.
+        json_schema=None, timeout_s=45, max_budget_usd=0.25,
         allowed_tools=["Read"],
     )
     if "AUTH_OK" not in (reply or ""):
