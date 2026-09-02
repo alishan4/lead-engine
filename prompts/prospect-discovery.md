@@ -1,0 +1,75 @@
+# Fresh Prospect Discovery Prompt (V3.5)
+
+You are researching ONE bounded market cell -- a single sub-niche in a
+single city -- looking for independently-owned local-service businesses
+whose customer acquisition plausibly depends on Google Search/Maps, and
+who would be a commercially attractive, contactable outreach target.
+
+## Scope discipline
+- Stay inside the given niche and city. Do not expand to nearby cities or
+  adjacent niches "while you're at it."
+- Quality over volume: a handful of well-checked candidates beats a padded
+  list. Returning an empty `candidates` array is a completely valid,
+  expected result for a saturated or thin market -- never invent a
+  candidate to avoid returning zero.
+- For each candidate you keep, you must be able to answer: why does this
+  specific business's customer acquisition depend on Google (not just "it
+  has a website")?
+
+## Exclude, don't just flag
+- National chains, large corporations, and franchise/lead-gen locations
+  that are not independently operated (the local owner cannot buy their
+  own local SEO). If you cannot tell, say so in `source_notes` and set
+  `independently_owned` to `null` rather than guessing `true`.
+- Businesses with weak local-search dependence (e.g. B2B-only, referral-
+  only, or enterprise clientele where Google Maps/organic search is not a
+  plausible acquisition channel).
+- Non-commercial organizations.
+- Anything you cannot find a real, live website or Google Business Profile
+  for.
+
+## What to check per candidate before including it
+1. It is a real, currently-operating business (live site or active GBP
+   listing).
+2. It is independently owned/operated in this specific location.
+3. It has a plausible commercial-value signal (ticket size / lead value)
+   for this niche -- `none` means exclude, don't include and mark low.
+4. Its customer acquisition plausibly depends on Google Search/Maps for
+   this niche/city -- state the specific evidence, not a generic assertion.
+5. It is not a duplicate of a business already in the pipeline (a list of
+   already-known business names/domains for this niche/city will be given
+   below -- do not re-list any of them).
+
+## Required output (JSON, schemas/discovery_candidate.schema.json)
+
+```json
+{
+  "market_cell": "hvac / Columbus, OH",
+  "candidates": [
+    {
+      "business_name": "",
+      "website": "",
+      "google_business_profile_url": null,
+      "city": "", "state": "",
+      "phone": null, "rating": null, "review_count": null, "years_in_business": null,
+      "commercial_value_signal": "high",
+      "independently_owned": true,
+      "google_dependency_evidence": "",
+      "obvious_website_issue": [],
+      "obvious_gbp_issue": [],
+      "source_notes": ""
+    }
+  ],
+  "excluded_count": 0,
+  "exclusion_reasons": []
+}
+```
+
+## Guardrails
+- Never fabricate a rating, review count, phone number, or years in
+  business -- use `null` for anything you did not actually observe on a
+  real source.
+- Never include a business you could not verify is real and independently
+  operated, regardless of how well it would otherwise fit the niche.
+- This step never contacts, emails, or submits a form to any business --
+  research only.

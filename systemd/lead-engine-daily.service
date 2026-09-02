@@ -1,5 +1,5 @@
 [Unit]
-Description=Lead Engine daily orchestration (deterministic pipeline stages only; never sends email)
+Description=Lead Engine daily orchestration (V3.5: unattended Claude acquisition worker + deterministic finalization; never sends email, never touches Gmail)
 Wants=network-online.target
 After=network-online.target
 
@@ -12,5 +12,12 @@ ExecStart=/home/user/Development/experiments/lead-engine/scripts/run_daily.sh
 # (This only protects against a second *systemd-triggered* start; the
 # script's own flock in run_daily.sh is what protects against a manual
 # invocation racing a scheduled one.)
-TimeoutStartSec=600
+# V3.5: bumped from 600s -- a run that includes real Claude research
+# (business verification, buying signals, contactability, fresh discovery,
+# capped specialist escalation) legitimately takes longer than the ~1s
+# deterministic-only run this used to be. The worker's own internal
+# wall-clock budget (config/acquisition.yaml: max_worker_runtime_seconds,
+# default 2700s) is the real ceiling; this is only the outer systemd
+# backstop and is set comfortably above it.
+TimeoutStartSec=3600
 Nice=10

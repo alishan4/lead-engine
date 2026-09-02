@@ -2,17 +2,27 @@
 """
 Lead Engine daily orchestration (Tue-Fri automated run).
 
-HONEST SCOPE: this script automates every stage of the pipeline that is
-genuinely deterministic -- scoring, FIT/GAP routing, the zero-agent
-intelligence scan, dossier/asset build, email generation, QA, send-window
-planning, and the READY_TO_SEND export. It deliberately does NOT and
-CANNOT automate stages that require real web research or human/Claude
-judgment: new-market discovery, first-time business verification, buying-
-signal evidence collection, franchise-status research, or contact-identity
-verification. Those stages have always used a --print-prompt / --save
-pattern precisely because they need a real research pass -- a cron job has
-no research capability, and this script never fabricates one. Leads
-blocked on a research stage are counted and reported, never guessed past.
+V3.5 UPDATE (see OPERATING-RULES.md Sec.4 and docs/AUTOMATION.md for the
+full policy change): this script now runs a real, unattended Claude
+acquisition worker (scripts/acquisition_worker.py) BEFORE the deterministic
+loop below -- it advances pending leads through business verification,
+commercial FIT, buying-signal evidence, contactability, GAP, deterministic
+intelligence, capped specialist escalation, and contact-identity
+verification, and performs bounded fresh-prospect discovery, all under a
+fail-closed auth preflight, a wall-clock timeout, and a Read/WebSearch/
+WebFetch-only tool profile that makes the Gmail/contact-form/arbitrary-
+write boundaries structural rather than merely promptable (see
+claude_invoke.py). Pass --deterministic-only to reproduce this script's
+exact pre-V3.5 behavior (the safe rollback lever if that worker is ever
+disabled).
+
+HONEST SCOPE, unchanged below this point: everything from here down
+automates only what is genuinely deterministic -- FIT/GAP routing, the
+zero-agent-eligible portion of the intelligence scan, dossier/asset build
+for leads already advanced, email generation, QA, send-window planning, and
+the READY_TO_SEND export. A lead still blocked on a research stage after
+the acquisition worker's own budget/ceiling/timeout is counted and
+reported, never guessed past.
 
 This script NEVER calls send_executor.py, delivery_reconciliation.py,
 follow_up.py, or reply_handling.py -- those stages start only after a real
@@ -20,11 +30,13 @@ Gmail send, which is explicitly ChatGPT's / the user's responsibility, not
 this pipeline's. Lead Engine's automated output stops at READY_TO_SEND.
 
 Usage:
-  python3 scripts/run_daily.py [--dry-run]
+  python3 scripts/run_daily.py [--dry-run] [--deterministic-only]
 
 --dry-run runs every real read/compute step but writes the run summary to
 data/runtime/daily_runs/DRY-RUN-<timestamp>.json instead of the dated
 production path, so a validation run can never be mistaken for a real one.
+--deterministic-only skips the V3.5 acquisition worker entirely (pre-V3.5
+behavior).
 """
 import argparse
 import json
@@ -33,8 +45,12 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from _lib import ROOT, PROSPECTS, MARKETS, LEADS, DATA, read_jsonl, load_json, write_json, now_iso
+import acquisition_worker
+
+SCHEDULE_TZ = ZoneInfo("Asia/Karachi")
 
 RUNTIME_DIR = DATA / "runtime"
 DAILY_RUNS_DIR = RUNTIME_DIR / "daily_runs"
@@ -127,6 +143,16 @@ def status_counts(records):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--deterministic-only", action="store_true",
+                     help="V3.5: skip the Claude acquisition worker entirely -- reproduces this script's "
+                          "exact pre-V3.5 behavior. The rollback lever if the acquisition worker is disabled.")
+    ap.add_argument("--trigger-type", default="NORMAL_SCHEDULE",
+                     help="Recorded in the run summary as-is. The normal systemd timer firing leaves this at "
+                          "its default; scripts/run_claude_acquisition.sh sets it explicitly for a manual/"
+                          "catch-up invocation of the acquisition worker directly (not through this script).")
+    ap.add_argument("--max-prospects", type=int, default=None,
+                     help="V3.5: cap how many leads the acquisition worker touches this run -- for a "
+                          "controlled validation invocation, never used by the production timer.")
     args = ap.parse_args()
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -139,7 +165,14 @@ def main():
     failures = []
     limitations = []
 
-    log(f"=== Lead Engine daily run {run_id} (dry_run={args.dry_run}) ===", logfile)
+    def today_key():
+        # Karachi-local date, matching the timer's own schedule timezone --
+        # see scripts/catchup.py, which reads this same dated summary file
+        # to decide same-day catch-up eligibility.
+        return datetime.now(SCHEDULE_TZ).date().isoformat()
+
+    log(f"=== Lead Engine daily run {run_id} (dry_run={args.dry_run}, deterministic_only={args.deterministic_only}, "
+        f"trigger_type={args.trigger_type}) ===", logfile)
 
     # --- Step: workspace verification -----------------------------------
     ok, problems = verify_workspace()
@@ -148,9 +181,10 @@ def main():
             log(f"FATAL: {p}", logfile)
         summary = {
             "run_id": run_id, "started_at": started_at, "completed_at": now_iso(),
+            "trigger_type": args.trigger_type,
             "dry_run": args.dry_run, "infrastructure_failure": True, "problems": problems,
         }
-        out = DAILY_RUNS_DIR / (f"DRY-RUN-{run_id}.json" if args.dry_run else f"{datetime.now(timezone.utc).date().isoformat()}.json")
+        out = DAILY_RUNS_DIR / (f"DRY-RUN-{run_id}.json" if args.dry_run else f"{today_key()}.json")
         write_json(out, summary)
         log(f"Workspace verification FAILED -- exiting non-zero. Summary: {out}", logfile)
         return 2  # infrastructure-level failure -> non-zero exit, per the explicit requirement
@@ -161,15 +195,36 @@ def main():
     before = artifact_snapshot()
     prospects_before = read_jsonl(PROSPECTS / "discovered.jsonl")
 
-    # --- Step: discovery (honest no-op) ----------------------------------
-    limitations.append("Market/discovery workflow: no deterministic discovery exists in this codebase. "
-                        "New markets/businesses must be added via a human/Claude research session, not this cron job.")
-
-    # --- Step: business verification (honest no-op for NEW businesses) ---
-    unverified = [p for p in prospects_before if p.get("status") == "DISCOVERED"]
-    if unverified:
-        limitations.append(f"{len(unverified)} prospect(s) at DISCOVERED still need business-identity "
-                            "verification research (verify_business.py --print-prompt) before this job can advance them.")
+    # --- Step: V3.5 Claude acquisition worker (pending leads + fresh
+    #     discovery) -- runs BEFORE the deterministic loop below, which is
+    #     otherwise completely unchanged from pre-V3.5 behavior. See
+    #     scripts/acquisition_worker.py for the full safety model.
+    acquisition_stats = None
+    if args.deterministic_only:
+        limitations.append("--deterministic-only: V3.5 acquisition worker skipped by explicit flag.")
+        limitations.append("Market/discovery workflow: skipped (deterministic-only mode). "
+                            "New markets/businesses must be added via a separate acquisition-worker run.")
+        unverified = [p for p in prospects_before if p.get("status") == "DISCOVERED"]
+        if unverified:
+            limitations.append(f"{len(unverified)} prospect(s) at DISCOVERED still need business-identity "
+                                "verification research (verify_business.py --print-prompt) before this job can advance them.")
+    else:
+        log("Starting V3.5 Claude acquisition worker...", logfile)
+        acquisition_stats = acquisition_worker.run(
+            max_prospects=args.max_prospects, trigger_type=args.trigger_type,
+            log=lambda msg: log(msg, logfile),
+        )
+        log(f"Claude acquisition worker finished: auth_status={acquisition_stats.get('claude_auth_status')}, "
+            f"run_already_active={acquisition_stats.get('run_already_active')}, "
+            f"acquisition_run_completed={acquisition_stats.get('acquisition_run_completed')}, "
+            f"worker_timeout={acquisition_stats.get('worker_timeout')}", logfile)
+        if acquisition_stats.get("claude_auth_status") == "CLAUDE_AUTH_REQUIRED":
+            limitations.append("CLAUDE_AUTH_REQUIRED -- acquisition worker failed closed, no research performed this run.")
+        if acquisition_stats.get("run_already_active"):
+            limitations.append("RUN_ALREADY_ACTIVE -- another acquisition worker was already running; this run's "
+                                "acquisition phase was skipped, deterministic finalization still proceeded.")
+        limitations.extend(acquisition_stats.get("limitations", []))
+        failures.extend(acquisition_stats.get("per_lead_failures", []))
 
     # --- Step: FIT/GAP + qualification routing (deterministic, bulk) ----
     run_script(["qualify_leads.py", "--v3"], logfile, failures)
@@ -191,8 +246,12 @@ def main():
         if p3.get("status") == "DOSSIER_READY":
             run_script(["stage_asset.py", "--id", pid], logfile, failures, prospect_id=pid)
     if needs_research_intel:
-        limitations.append(f"{needs_research_intel} lead(s) need a specialist agent research session "
-                            "(route_to_specialist.py) -- unattended automation never invokes a live agent call.")
+        if args.deterministic_only:
+            limitations.append(f"{needs_research_intel} lead(s) need a specialist agent research session "
+                                "(route_to_specialist.py) -- --deterministic-only mode never invokes a live agent call.")
+        else:
+            limitations.append(f"{needs_research_intel} lead(s) still need specialist escalation after the "
+                                "acquisition worker's budget/ceiling/timeout -- carried over to the next run.")
 
     # --- Step: contact identity (honest no-op for NEW contact research) -
     prospects = read_jsonl(PROSPECTS / "discovered.jsonl")
@@ -202,8 +261,9 @@ def main():
         if p.get("status") == "ASSET_STAGED" and not (LEADS / pid / "contact_record.json").exists():
             needs_contact_research += 1
     if needs_contact_research:
-        limitations.append(f"{needs_contact_research} lead(s) at ASSET_STAGED need a contact-identity research "
-                            "pass (contact_identity.py --print-prompt) -- never auto-guessed.")
+        limitations.append(f"{needs_contact_research} lead(s) at ASSET_STAGED still need a contact-identity research "
+                            "pass (contact_identity.py) -- never auto-guessed, carried over to the next run "
+                            "(deterministic-only mode never performs this research at all).")
 
     # --- Step: draft -> QA -> send window (deterministic, uses existing --
     #     contact_record.json only; never performs new research) ---------
@@ -241,6 +301,7 @@ def main():
 
     summary = {
         "run_id": run_id,
+        "trigger_type": args.trigger_type,
         "started_at": started_at,
         "completed_at": now_iso(),
         "dry_run": args.dry_run,
@@ -260,9 +321,28 @@ def main():
         "ready_to_send": ready_to_send_total,
         "failures": failures,
         "limitations": limitations,
+        # --- V3.5 fields (see OPERATING-RULES.md Sec.4 / docs/AUTOMATION.md) ---
+        "claude_auth_status": None,
+        "claude_worker_started": None,
+        "claude_worker_completed": None,
+        "acquisition_run_completed": False,
+        "pending_leads_processed": 0,
+        "fresh_candidates_discovered": 0,
+        "fit_scored": 0,
+        "gap_scored": 0,
+        "buying_signals_verified": 0,
+        "deterministic_wedges": 0,
+        "one_agent_escalations": 0,
+        "two_agent_escalations": 0,
+        "no_defensible_wedge": 0,
+        "per_lead_failures": [],
+        "worker_timeout": False,
+        "run_already_active": False,
     }
+    if acquisition_stats:
+        summary.update({k: v for k, v in acquisition_stats.items() if k != "limitations"})
 
-    out_name = f"DRY-RUN-{run_id}.json" if args.dry_run else f"{datetime.now(timezone.utc).date().isoformat()}.json"
+    out_name = f"DRY-RUN-{run_id}.json" if args.dry_run else f"{today_key()}.json"
     out_path = DAILY_RUNS_DIR / out_name
     write_json(out_path, summary)
     log(f"Run summary written to {out_path}", logfile)

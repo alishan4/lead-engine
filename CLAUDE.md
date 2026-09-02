@@ -56,8 +56,13 @@ email and does not hold Gmail credentials — see `OPERATING-RULES.md` §1.
 - `data/fixtures/` — synthetic example records showing every artifact's
   real shape, safe to read and safe to commit.
 - `docs/AUTOMATION.md` — the Tuesday–Friday scheduled-run design, the
-  systemd units, the dry-run validation procedure, and how to enable/
-  disable the timer.
+  systemd units, the dry-run validation procedure, how to enable/disable
+  the timer, and (V3.5) the unattended Claude acquisition worker and
+  same-day catch-up design.
+- `config/acquisition.yaml` / `scripts/acquisition_worker.py` (V3.5) — the
+  ceilings/timeouts/budgets and orchestration for the unattended Claude
+  research worker; see `OPERATING-RULES.md` §4's V3.5 update for the
+  structural safety model before touching either.
 - `reports/` — dated engineering reports for each build phase (V1 through
   V3.3). Real contact-channel identifiers (emails, phone numbers, personal
   names tied to real third-party businesses) are redacted from these

@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "discovery_candidate.schema.json",
+  "title": "DiscoveryResult",
+  "description": "V3.5 fresh-prospect discovery output for one SUB-NICHE x CITY market cell. A legitimate result can be an empty candidates array -- discovery never pads to reach a quota.",
+  "type": "object",
+  "required": ["market_cell", "candidates"],
+  "properties": {
+    "market_cell": {"type": "string"},
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "business_name", "website", "city", "state", "commercial_value_signal",
+          "independently_owned", "google_dependency_evidence", "source_notes"
+        ],
+        "properties": {
+          "business_name": {"type": "string"},
+          "website": {"type": ["string", "null"]},
+          "google_business_profile_url": {"type": ["string", "null"]},
+          "city": {"type": "string"},
+          "state": {"type": "string"},
+          "phone": {"type": ["string", "null"]},
+          "rating": {"type": ["number", "null"], "minimum": 0, "maximum": 5},
+          "review_count": {"type": ["integer", "null"], "minimum": 0},
+          "years_in_business": {"type": ["integer", "null"]},
+          "commercial_value_signal": {"type": "string", "enum": ["high", "medium", "low", "none"]},
+          "independently_owned": {
+            "type": ["boolean", "null"],
+            "description": "false or null for an obvious national chain/large corporation/franchise not independently operated -- these must be excluded from candidates, not merely flagged"
+          },
+          "google_dependency_evidence": {
+            "type": "string",
+            "description": "Why this business's customer acquisition plausibly depends on Google Search/Maps (e.g. emergency/local-intent service category, visible reliance on organic/local-pack traffic) -- never a bare assertion with no basis"
+          },
+          "obvious_website_issue": {"type": ["array", "null"], "items": {"type": "string"}},
+          "obvious_gbp_issue": {"type": ["array", "null"], "items": {"type": "string"}},
+          "source_notes": {"type": "string", "description": "Where/how this business was found (search query, directory, GBP listing, etc.)"}
+        }
+      }
+    },
+    "excluded_count": {"type": ["integer", "null"], "description": "How many businesses were considered and excluded (chain/franchise/non-commercial/duplicate/weak Google dependency) -- honesty signal that real research happened"},
+    "exclusion_reasons": {"type": ["array", "null"], "items": {"type": "string"}}
+  }
+}

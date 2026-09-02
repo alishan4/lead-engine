@@ -65,8 +65,41 @@ message instead of running concurrently against the same data files.
 
 ## Lead Engine daily run — what it actually automates
 
-`scripts/run_daily.py` (invoked via `run_daily.sh`) automates exactly the
-stages that are genuinely deterministic:
+### V3.5 (current): the Claude acquisition worker runs first
+
+`scripts/run_daily.py` now starts with `scripts/acquisition_worker.py`
+(unless `--deterministic-only` is passed), which does everything the V3.4
+version of this document said no deterministic method existed for:
+
+- Fresh-prospect discovery (`discover_prospects.py`) over a bounded
+  SUB-NICHE × CITY rotation (`config/acquisition.yaml: discovery_markets`).
+- First-time business-identity verification (`verify_business.py`).
+- Franchise-status research once the blocklist flags a match
+  (`check_franchise.py`).
+- Buying-signal / why-now evidence collection (`assess_buying_signals.py`).
+- Contactability pre-checks (`check_contactability.py`).
+- Specialist-agent escalation when the deterministic scan alone doesn't
+  yield a defensible wedge (`route_to_specialist.py`), capped at 1–2 calls
+  per lead exactly as before.
+- Contact-identity (re-)verification (`contact_identity.py`).
+
+It does this by invoking non-interactive `claude -p` (via
+`scripts/claude_invoke.py`) instead of waiting for a human to paste
+research into an interactive session — see `OPERATING-RULES.md` §4's V3.5
+update for the full structural safety model (`--restricted`, a Read/
+WebSearch/WebFetch-only tool allowlist, a fail-closed auth preflight, and
+the ceilings in `config/acquisition.yaml`), and
+`reports/V3.5-UNATTENDED-ACQUISITION-REPORT.md` for the design record and
+validation results. A lead still blocked on one of these stages after the
+worker's own budget/ceiling/timeout is counted in the run summary's
+`limitations` array and `per_lead_failures`, never silently skipped or
+guessed past — and re-run's own idempotent status gates mean it's simply
+picked up again on the next run.
+
+Pass `--deterministic-only` to `run_daily.py`/`run_daily.sh` to skip this
+worker entirely and reproduce the exact pre-V3.5 behavior described next.
+
+### Then, unchanged since V2/V3: the deterministic finalization loop
 
 1. Verify workspace (required files present, config loads).
 2. Confirm `OPERATING-RULES.md`/`CLAUDE.md` are present (the permanent
@@ -77,37 +110,39 @@ stages that are genuinely deterministic:
    (`run_deterministic_scan.py`, real HTTP fetches, no LLM call) →
    dossier build → asset staging, for whichever leads are eligible.
 5. Per-lead: email generation → QA → send-window planning, for whichever
-   leads already have a saved `contact_record.json` from a prior research
-   pass.
+   leads already have a saved `contact_record.json` (now typically
+   produced earlier in the same run, by the acquisition worker).
 6. Export the `READY_TO_SEND` handoff (`export_ready_to_send.py`).
 7. Regenerate the reporting exports (`report_pipeline.py`,
    `triage_report.py`).
 8. Write a structured run summary to
-   `data/runtime/daily_runs/YYYY-MM-DD.json` (gitignored — this is real
-   operational data, not code).
+   `data/runtime/daily_runs/YYYY-MM-DD.json` (Asia/Karachi-local date;
+   gitignored — this is real operational data, not code).
 
-**What it deliberately does NOT automate**, because no deterministic
-method exists for it in this codebase — these all require a real web
-research pass or human/Claude judgment, and a cron job never fabricates
-one:
-
-- New-market/business discovery (no discovery script exists at all).
-- First-time business-identity verification (`verify_business.py`).
-- Buying-signal evidence collection (`assess_buying_signals.py`).
-- Franchise-status research once the blocklist flags a match
-  (`check_franchise.py`).
-- Contact-identity (re-)verification (`contact_identity.py`).
-- Specialist-agent escalation when the deterministic scan alone doesn't
-  yield a defensible wedge (`route_to_specialist.py`) — this would require
-  invoking a real claude-seo agent unattended, which this job never does.
-
-Leads blocked on any of these are counted in the run summary's
-`limitations` array, never silently skipped or guessed past.
-
-**What it never does, under any circumstance:** call
+**What it never does, under any circumstance, in either mode:** call
 `send_executor.py`, `delivery_reconciliation.py`, `follow_up.py`, or
 `reply_handling.py`. All four sit downstream of a real Gmail send, which
-this repository does not perform (see the Gmail boundary below).
+this repository does not perform (see the Gmail boundary below) — this is
+unaffected by the V3.5 change and is enforced both by never being called
+and by the acquisition worker's Claude subprocesses having no tool capable
+of reaching Gmail or a contact form in the first place.
+
+### Same-day catch-up (V3.5)
+
+The permanent schedule is still exactly Tue–Fri 12:00 PKT, one timer, no
+second timer added. `scripts/catchup.py` (pure functions, see its own
+docstring) answers "if the acquisition worker is invoked right now, what
+should happen?" for a 12:00–14:00 PKT window: `NORMAL_SCHEDULE` at the
+timer's own firing time, `SAME_DAY_CATCH_UP` inside the window if today
+has no completed acquisition cycle yet, `ALREADY_COMPLETED_TODAY` if one
+already ran, `RUN_ALREADY_ACTIVE` if the acquisition lock is held, and
+`MISSED_ACQUISITION_WINDOW` past 14:00 with nothing having run.
+`scripts/run_claude_acquisition.sh` is the manual/catch-up entrypoint that
+consults it. **This does not add automatic polling** — no new timer or
+loop watches the clock between 12:00 and 14:00 on its own; recovering a
+run that failed mid-window still requires some manual/follow-up invocation
+of `run_claude_acquisition.sh` inside the window, since a second production
+timer is explicitly out of scope.
 
 ## READY_TO_SEND handoff
 
@@ -162,8 +197,12 @@ See `OPERATING-RULES.md` §2 for the exact non-equivalences this implies
 ## Manual execution
 
 ```
-scripts/run_daily.sh              # a real production run, right now
-scripts/run_daily.sh --dry-run    # validation run; writes to a DRY-RUN- prefixed summary
+scripts/run_daily.sh                          # a real production run, right now (includes V3.5 acquisition)
+scripts/run_daily.sh --dry-run                # validation run; writes to a DRY-RUN- prefixed summary
+scripts/run_daily.sh --deterministic-only     # pre-V3.5 behavior only, no Claude research
+scripts/run_claude_acquisition.sh                          # auto-detect trigger_type via catchup.py, real run
+scripts/run_claude_acquisition.sh "" --max-prospects 2      # controlled validation run (real research, capped)
+python3 scripts/claude_preflight.py                        # standalone Claude-auth sanity check
 ```
 
 ## Timer status

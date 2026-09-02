@@ -127,21 +127,73 @@ proof of delivery. Absent a real signal, a message correctly stays in
 
 ## 4. Automation-specific rules
 
-- The daily/scheduled run (`scripts/run_daily.sh`) automates only the
-  deterministic stages of the pipeline. Stages that require real web
-  research or human/Claude judgment (new-market discovery, first-time
-  business verification, buying-signal evidence collection,
-  franchise-status research, contact-identity (re-)verification,
-  specialist-agent escalation) are never invoked unattended — a lead
-  blocked on one of these is counted and reported, never guessed past.
+### V3.5 update (2026-09-02) — supersedes the "never invoked unattended" rule below
+
+Through V3.4, this section said the stages requiring real web research or
+Claude judgment (new-market discovery, business verification, buying-signal
+evidence, franchise research, contact-identity verification, specialist
+escalation) were **never invoked unattended** — a human always had to paste
+research into an interactive Claude session. That boundary is deliberately
+lifted as of V3.5, by explicit user authorization, now that non-interactive
+`claude -p` execution under systemd --user is verified working. It is
+replaced with a **structural**, not merely promptable, safety model:
+
+- `scripts/acquisition_worker.py` runs every one of those research stages
+  through `scripts/claude_invoke.py`, which invokes `claude -p` with
+  `--restricted` plus an explicit `Read, WebSearch, WebFetch` tool
+  allowlist. `--restricted` unconditionally strips out Bash/PowerShell/
+  REPL/other code-execution tools and refuses `--dangerously-skip-
+  permissions`. **The invoked Claude process therefore has no tool capable
+  of sending email, accessing Gmail, submitting a contact form, or writing
+  any file, under any prompt it could ever receive** — this holds for
+  every stage, including specialist escalation, which deliberately does
+  not shell out to the interactive claude-seo Skill packages (they require
+  Bash/Write) and instead answers the same routed, capped question through
+  the same restricted profile (see `acquisition_worker.py: ask_specialist`).
+  The orchestrator process — never Claude — is the only thing that ever
+  writes a file or runs a script, via the same `--save -` contract every
+  research-stage script already used for a human-driven research pass.
+- A fail-closed auth preflight (`scripts/claude_preflight.py`) runs before
+  any research: if Claude auth is unavailable, the run records
+  `CLAUDE_AUTH_REQUIRED` and performs zero research that cycle — it never
+  fabricates a result or guesses past a stage it couldn't actually run.
+- Every ceiling this worker obeys is in `config/acquisition.yaml`: an
+  outreach-worthy ceiling (15, a ceiling not a quota — see V3.5's own
+  report for why fewer, better prospects is a fully successful outcome), a
+  bounded fresh-discovery market rotation (never "search all of the US"),
+  a wall-clock worker timeout, per-call timeouts, and a per-call
+  `--max-budget-usd` cost circuit breaker.
+- FIT/GAP thresholds (`config/scoring.yaml`), specialist-call caps
+  (`config/limits.yaml`), and every V3.1–V3.4 decision function are
+  completely unchanged — the acquisition worker calls the exact same
+  scripts unattended that a human previously ran interactively; it does
+  not reimplement or loosen any of them.
+- The four scripts below remain **permanently** un-called by any automated
+  path, unattended or not — this specific rule is not superseded by
+  anything above.
+
+### Rules unchanged since V1–V3.4
+
+- The daily/scheduled run (`scripts/run_daily.sh`) automates the
+  deterministic stages of the pipeline, now preceded by the V3.5
+  acquisition worker described above (pass `--deterministic-only` to
+  reproduce the pre-V3.5 behavior exactly — the rollback lever if the
+  worker is ever disabled). A lead still blocked on a research stage after
+  the worker's own budget/ceiling/timeout is counted and reported, never
+  guessed past.
 - The scheduled run never calls `send_executor.py`,
   `delivery_reconciliation.py`, `follow_up.py`, or `reply_handling.py` —
   those all sit downstream of a real Gmail send, which this repository
   does not perform.
-- A scheduled run must never overlap with another (single-run lock), must
-  isolate a single lead's failure from the rest of the batch, must never
-  delete production prospect history, and must exit non-zero only on an
-  infrastructure-level failure (not on a per-lead skip).
+- A scheduled run must never overlap with another (single-run lock — now
+  two layers: `run_daily.sh`'s `run.lock` flock, and
+  `acquisition_worker.py`'s own `acquisition.lock` for standalone/
+  validation/catch-up invocations), must isolate a single lead's failure
+  from the rest of the batch, must never delete production prospect
+  history, and must exit non-zero only on an infrastructure-level failure
+  (not on a per-lead skip).
 
 See `docs/AUTOMATION.md` for the concrete scheduling, locking, dry-run
-validation, and enable/disable procedure.
+validation, and enable/disable procedure, and
+`reports/V3.5-UNATTENDED-ACQUISITION-REPORT.md` for the full V3.5 design
+and validation record.

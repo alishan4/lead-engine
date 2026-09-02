@@ -1,6 +1,7 @@
 """Shared helpers for lead-engine scripts. No external deps beyond PyYAML."""
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +10,13 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "config"
-DATA = ROOT / "data"
+
+# V3.5: LEAD_ENGINE_DATA_DIR lets a caller (the controlled-validation sandbox
+# in acquisition_worker.py) point every data path at a throwaway copy instead
+# of the real production data/ tree, so a validation run cannot corrupt real
+# prospect state. Unset in every normal/production invocation, in which case
+# behavior is byte-for-byte what it always was.
+DATA = Path(os.environ["LEAD_ENGINE_DATA_DIR"]) if os.environ.get("LEAD_ENGINE_DATA_DIR") else ROOT / "data"
 PROSPECTS = DATA / "prospects"
 MARKETS = DATA / "markets"
 LEADS = DATA / "leads"

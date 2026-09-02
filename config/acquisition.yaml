@@ -1,0 +1,75 @@
+# V3.5 — Unattended Claude acquisition worker: every ceiling, budget, and
+# window it obeys. Nothing here changes FIT/GAP thresholds (config/scoring.yaml)
+# or specialist-call caps (config/limits.yaml) -- those stay frozen and are
+# read unchanged by the existing V3.1/V3.2 scripts this worker calls.
+
+# Outreach-worthy ceiling -- a CEILING, never a quota. The worker must stop
+# discovering/researching fresh candidates once today's QUALIFIED +
+# HIGH_PRIORITY count reaches this, but 1 excellent prospect on a slow day is
+# a fully successful run. Never lower FIT/GAP/evidence/QA bars to reach it.
+outreach_worthy_ceiling: 15
+
+# Fresh-discovery research budget -- bounds how much of the day's run can go
+# to "search for new businesses" rather than advancing already-pending leads,
+# and stops Claude from being able to search indefinitely trying to reach the
+# ceiling above.
+max_fresh_market_cells_per_run: 3          # distinct SUB-NICHE x CITY cells explored per run
+max_fresh_candidates_researched_per_run: 10  # new businesses taken through verification+ per run
+
+# Wall-clock / per-call timeouts (seconds). The worker checks the overall
+# deadline between units of work (per lead, per market cell) -- it will not
+# start new work once past deadline, but an in-flight `claude -p` call is
+# additionally hard-capped by its own per-call timeout as a backstop.
+max_worker_runtime_seconds: 2700          # 45 minutes, whole acquisition phase
+max_claude_call_seconds_research: 240     # business verification, buying signals, discovery, specialist calls
+max_claude_call_seconds_short: 90         # contactability, franchise (narrower questions) -- bumped from 60s after
+                                           # the 2026-09-02 controlled validation observed a real contactability
+                                           # check come within 0.1s of a 60s cap (see V3.5 report)
+
+# Cost circuit breaker, independent of the timeouts above. Passed straight to
+# `claude -p --max-budget-usd`.
+max_budget_usd_per_call: 1.00
+
+# Same-day catch-up window (see scripts/catchup.py). The permanent production
+# schedule (systemd/lead-engine-daily.timer) is unchanged by this file --
+# these values only govern whether a same-day recovery run is eligible.
+catchup_window:
+  start: "12:00"
+  end: "14:00"
+  tz: "Asia/Karachi"
+  days: ["Tue", "Wed", "Thu", "Fri"]
+
+# Bounded fresh-discovery market rotation. Deliberately NOT "search all of
+# the US" -- a fixed niche x city grid, rotated by day-of-year so coverage
+# spreads out over time instead of hammering the same cells, and a cell
+# already present in data/markets/ is skipped in favor of a new one. Niches
+# are the tier-1/2 entries from config/niches.yaml the spec calls out by
+# name; cities are mid-size US metros chosen for strong local-search
+# dependence (not saturated national-chain markets).
+discovery_markets:
+  niches: ["hvac", "roofing", "restoration", "family_law", "plumbing"]
+  cities:
+    - { city: "Columbus", state: "OH" }
+    - { city: "Indianapolis", state: "IN" }
+    - { city: "Kansas City", state: "MO" }
+    - { city: "Louisville", state: "KY" }
+    - { city: "Raleigh", state: "NC" }
+    - { city: "Richmond", state: "VA" }
+    - { city: "Tucson", state: "AZ" }
+    - { city: "Omaha", state: "NE" }
+    - { city: "Boise", state: "ID" }
+    - { city: "Spokane", state: "WA" }
+    - { city: "Chattanooga", state: "TN" }
+    - { city: "Greenville", state: "SC" }
+
+# Claude invocation parameters shared by every V3.5 research call
+# (scripts/claude_invoke.py). --restricted + this allowlist is the structural
+# enforcement of "no Gmail, no contact forms, no arbitrary writes": the
+# invoked process has no tool capable of doing any of those, independent of
+# what the prompt asks for.
+claude_invocation:
+  allowed_tools: ["Read", "WebSearch", "WebFetch"]
+  permission_mode: "dontAsk"
+  restricted: true
+  output_format: "json"
+  no_session_persistence: true
