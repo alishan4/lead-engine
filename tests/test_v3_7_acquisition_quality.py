@@ -295,19 +295,128 @@ class TestProvenanceGuarantee(unittest.TestCase):
             self.assertIn(needle, text, f"{fname} must still gate writes on KNOWN_SOURCES membership")
 
 
+def _obs_row(position, keyword, field="maps_position", source="manual_maps_check"):
+    row = {"exact_rank_verified": "True", "keyword": keyword, "source": source, "observed_at": now_iso()}
+    row[field] = str(position)
+    other_field = "organic_position" if field == "maps_position" else "maps_position"
+    row[other_field] = ""
+    return row
+
+
+class TestQueryLevelRankingAggregationV371(unittest.TestCase):
+    """V3.7.1 regression tests -- the real Example Restoration case
+    (positions [2, 4, 6] across 3 distinct queries) and the guarantees the
+    fix must hold: never fabricate, never flip #2 into #6 or vice versa,
+    never cherry-pick worst either, historical single-observation inputs
+    stay compatible, and organic_position (never observed) stays UNKNOWN."""
+
+    def test_regal_case_old_min_hides_the_real_opportunity(self):
+        """Documents the bug this patch fixes -- rescore_leads.best_position()
+        (still used unchanged by the V2 track) is the wrong tool for
+        multi-query evidence, not because it's broken, but because it was
+        never designed for this input shape."""
+        from rescore_leads import best_position
+        matches = [_obs_row(6, "water damage restoration"), _obs_row(4, "mold remediation"), _obs_row(2, "fire damage restoration")]
+        old_value = best_position(matches, "maps_position")
+        self.assertEqual(old_value, 2)
+        self.assertFalse(4 <= old_value <= 15)  # masks both real in-band opportunities (#6, #4)
+
+    def test_regal_case_new_selector_surfaces_the_real_opportunity(self):
+        matches = [_obs_row(6, "water damage restoration"), _obs_row(4, "mold remediation"), _obs_row(2, "fire damage restoration")]
+        sel = ren.select_representative_position(matches, "maps_position")
+        self.assertTrue(4 <= sel["value"] <= 15)
+        self.assertTrue(sel["opportunity_band_hit"])
+        # the value written must be a REAL observed number for a REAL query -- never averaged/estimated
+        self.assertIn(sel["value"], (4, 6))
+        self.assertEqual(sel["query"], {4: "mold remediation", 6: "water damage restoration"}[sel["value"]])
+
+    def test_never_treats_number_from_one_query_as_a_different_query(self):
+        """Every returned value must be traceable to a query that actually
+        reported exactly that position -- #2 (fire damage) must never be
+        attributed to mold remediation, and vice versa."""
+        matches = [_obs_row(6, "water damage restoration"), _obs_row(4, "mold remediation"), _obs_row(2, "fire damage restoration")]
+        sel = ren.select_representative_position(matches, "maps_position")
+        by_query = {obs["query"]: obs["position"] for obs in sel["all_observations"]}
+        self.assertEqual(by_query[sel["query"]], sel["value"])  # the chosen query really did report the chosen value
+
+    def test_all_three_observations_preserved_regardless_of_which_is_selected(self):
+        matches = [_obs_row(6, "water damage restoration"), _obs_row(4, "mold remediation"), _obs_row(2, "fire damage restoration")]
+        sel = ren.select_representative_position(matches, "maps_position")
+        self.assertEqual(len(sel["all_observations"]), 3)
+        self.assertEqual({o["position"] for o in sel["all_observations"]}, {2, 4, 6})
+
+    def test_does_not_cherry_pick_worst_either(self):
+        """A single irrelevant/long-tail query ranking poorly must not
+        manufacture a fake opportunity for an otherwise strong business --
+        the opposite bias from min()."""
+        matches = [_obs_row(1, "flagship service"), _obs_row(1, "flagship service variant"), _obs_row(87, "obscure long tail term")]
+        sel = ren.select_representative_position(matches, "maps_position")
+        # no real position is in the 4-15 band -- correctly falls back to the
+        # single best (min) position, never the manufactured-looking 87
+        self.assertFalse(sel["opportunity_band_hit"])
+        self.assertEqual(sel["value"], 1)
+
+    def test_multiple_in_band_queries_pick_the_strongest_deterministically(self):
+        matches = [_obs_row(14, "query a"), _obs_row(5, "query b"), _obs_row(9, "query c")]
+        sel = ren.select_representative_position(matches, "maps_position")
+        self.assertEqual(sel["value"], 5)  # smallest of the in-band candidates -- reproducible, not arbitrary
+        self.assertTrue(sel["opportunity_band_hit"])
+
+    def test_single_observation_backward_compatible_with_best_position(self):
+        """Historical single-observation inputs (the overwhelmingly common
+        case) must score identically to before, whether or not that lone
+        observation happens to be in-band."""
+        from rescore_leads import best_position
+        for position in (2, 8, 20):
+            matches = [_obs_row(position, "the only tracked keyword")]
+            old_value = best_position(matches, "maps_position")
+            new_value = ren.select_representative_position(matches, "maps_position")["value"]
+            self.assertEqual(old_value, new_value, f"mismatch at position {position}")
+
+    def test_organic_position_uses_its_own_band_and_stays_unknown_if_never_observed(self):
+        matches = [_obs_row(6, "water damage restoration"), _obs_row(4, "mold remediation"), _obs_row(2, "fire damage restoration")]
+        sel = ren.select_representative_position(matches, "organic_position")
+        self.assertIsNone(sel["value"])  # never observed for organic -- stays None/UNKNOWN, never guessed from maps data
+        self.assertEqual(sel["all_observations"], [])
+
+    def test_organic_position_band_is_5_to_30_not_maps_band(self):
+        matches = [_obs_row(20, "q1", field="organic_position"), _obs_row(40, "q2", field="organic_position")]
+        sel = ren.select_representative_position(matches, "organic_position")
+        self.assertEqual(sel["value"], 20)  # 20 is in [5,30]; 40 is not -- must use organic's own band
+        self.assertTrue(sel["opportunity_band_hit"])
+
+    def test_opportunity_bands_match_score_gap(self):
+        """Static guard: the duplicated band constants must never silently
+        drift from score_leads.py's actual (frozen, untouched) thresholds."""
+        text = (SCRIPTS / "score_leads.py").read_text()
+        self.assertIn("4 <= p[\"maps_position\"] <= 15", text)
+        self.assertIn("5 <= p[\"organic_position\"] <= 30", text)
+        self.assertEqual(ren.OPPORTUNITY_BANDS["maps_position"], (4, 15))
+        self.assertEqual(ren.OPPORTUNITY_BANDS["organic_position"], (5, 30))
+
+    def test_never_fabricates_a_value_not_in_the_real_observation_set(self):
+        matches = [_obs_row(6, "a"), _obs_row(4, "b"), _obs_row(2, "c")]
+        sel = ren.select_representative_position(matches, "maps_position")
+        real_values = {o["position"] for o in sel["all_observations"]}
+        self.assertIn(sel["value"], real_values)  # never an average (e.g. 4.5 or 5) or any number not actually observed
+
+
 class TestReevaluationPure(unittest.TestCase):
     def test_never_overwrites_an_existing_position(self):
         p = {"maps_position": 3, "organic_position": None}
         matches = [{"maps_position": "9", "organic_position": "14", "exact_rank_verified": "True", "source": "semrush", "observed_at": now_iso()}]
-        added = ren.apply_new_ranking_fields(p, matches)
+        added, selections = ren.apply_new_ranking_fields(p, matches)
         self.assertNotIn("maps_position", added)  # already known -- never overwritten
         self.assertEqual(added.get("organic_position"), 14)
+        self.assertNotIn("maps_position", selections)
+        self.assertEqual(selections["organic_position"]["value"], 14)
 
     def test_no_usable_match_adds_nothing(self):
         p = {"maps_position": None, "organic_position": None}
         matches = [{"maps_position": "", "organic_position": "", "exact_rank_verified": "False", "source": "semrush", "observed_at": now_iso()}]
-        added = ren.apply_new_ranking_fields(p, matches)
+        added, selections = ren.apply_new_ranking_fields(p, matches)
         self.assertEqual(added, {})
+        self.assertEqual(selections, {})
 
     def test_provenance_appends_without_deleting_prior_sections(self):
         tmp = Path("/tmp") / f"v3_7_provenance_test_{id(self)}"
