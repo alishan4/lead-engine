@@ -74,6 +74,13 @@ email and does not hold Gmail credentials — see `OPERATING-RULES.md` §1.
   updates before touching any of these — in particular, never let Lead
   Engine's own sync write to the `EXTERNAL_OWNED_FIELDS` in
   `schemas/handoff_row.schema.json`.
+- `scripts/import_ranking_observation.py` / `scripts/reevaluate_needs_enrichment.py`
+  (V3.7) — the external ranking-evidence interface and the V3.1-track
+  deterministic re-evaluation it feeds; see `docs/AUTOMATION.md` "Ranking
+  evidence ingestion + deterministic re-evaluation." Both are human-
+  operated CLI tools, never called by `acquisition_worker.py` or any
+  unattended Claude subprocess, and neither is ever given a SEMrush/Google
+  credential.
 - `reports/` — dated engineering reports for each build phase (V1 through
   V3.3). Real contact-channel identifiers (emails, phone numbers, personal
   names tied to real third-party businesses) are redacted from these

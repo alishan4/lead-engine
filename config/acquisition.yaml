@@ -21,10 +21,27 @@ max_fresh_candidates_researched_per_run: 10  # new businesses taken through veri
 # start new work once past deadline, but an in-flight `claude -p` call is
 # additionally hard-capped by its own per-call timeout as a backstop.
 max_worker_runtime_seconds: 2700          # 45 minutes, whole acquisition phase
-max_claude_call_seconds_research: 240     # business verification, buying signals, discovery, specialist calls
-max_claude_call_seconds_short: 90         # contactability, franchise (narrower questions) -- bumped from 60s after
-                                           # the 2026-09-02 controlled validation observed a real contactability
-                                           # check come within 0.1s of a 60s cap (see V3.5 report)
+# V3.7: bumped again after 2026-09-02's second production pass observed TWO
+# discovery calls land at exactly 240.1s and one contactability call at
+# exactly 90.0s -- landing precisely on the cap on multiple real calls in one
+# run indicates the cap itself was too tight for the actual work being asked
+# (a multi-source WebSearch pass), not an occasional fluke. Combined with the
+# new bounded single retry-on-timeout below, this trades a modest amount of
+# worst-case per-call latency for materially fewer spurious per-lead/per-cell
+# failures.
+max_claude_call_seconds_research: 300     # business verification, buying signals, discovery, specialist calls
+max_claude_call_seconds_short: 120        # contactability, franchise (narrower questions)
+
+# V3.7: a real `claude -p` call that times out is retried exactly once (same
+# timeout, no backoff needed since the cost is time not rate) before being
+# recorded as a per-lead/per-cell failure -- never unbounded, never retried
+# for any OTHER error type (an auth/invocation error won't be fixed by
+# retrying blindly). One failure -- even after its retry -- must still never
+# block the rest of the batch; this only reduces how often a single slow
+# call turns into an avoidable failure at all.
+reliability:
+  retry_on_timeout: true
+  max_timeout_retries: 1
 
 # Cost circuit breaker, independent of the timeouts above. Passed straight to
 # `claude -p --max-budget-usd`.
@@ -42,12 +59,27 @@ catchup_window:
 # Bounded fresh-discovery market rotation. Deliberately NOT "search all of
 # the US" -- a fixed niche x city grid, rotated by day-of-year so coverage
 # spreads out over time instead of hammering the same cells, and a cell
-# already present in data/markets/ is skipped in favor of a new one. Niches
-# are the tier-1/2 entries from config/niches.yaml the spec calls out by
-# name; cities are mid-size US metros chosen for strong local-search
-# dependence (not saturated national-chain markets).
+# already present in data/markets/ is skipped in favor of a new one. Cities
+# are mid-size US metros chosen for strong local-search dependence (not
+# saturated national-chain markets).
+#
+# V3.7: broadened from 5 to 8 niches (added foundation_repair, estate_law,
+# moving_relocation) and switched scripts/acquisition_worker.py's
+# pick_discovery_cells() from a plain nested niche x city loop (which
+# concentrated an entire run inside ONE niche's contiguous block of cities --
+# confirmed as the root cause of 2026-09-02's two production passes
+# exploring almost nothing but family_law) to a tier-weighted, interleaved
+# rotation: config/niches.yaml's `tier` field (already the V3.1 FIT
+# niche_economics axis, not a new concept) sets how often a niche appears in
+# the interleave cycle -- tier 1 (hvac/roofing/restoration/foundation_repair)
+# most often, tier 2 (plumbing/family_law/estate_law/moving_relocation)
+# less often -- while every listed niche still appears every rotation cycle
+# (never fully excluded, per the explicit "do not reject a niche globally"
+# rule). See reports/V3.7-ACQUISITION-QUALITY-REPORT.md Sec.A for the
+# empirical analysis (niche tier, not review count/years-in-business, was
+# the dominant correlate of today's low FIT scores) that motivated this.
 discovery_markets:
-  niches: ["hvac", "roofing", "restoration", "family_law", "plumbing"]
+  niches: ["hvac", "roofing", "restoration", "foundation_repair", "plumbing", "family_law", "estate_law", "moving_relocation"]
   cities:
     - { city: "Columbus", state: "OH" }
     - { city: "Indianapolis", state: "IN" }

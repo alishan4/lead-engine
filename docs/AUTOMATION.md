@@ -63,6 +63,40 @@ youruser` (no sudo required, as demonstrated during setup).
 (manual, or an overlapping timer misfire) exits immediately with a clear
 message instead of running concurrently against the same data files.
 
+## V3.7 acquisition-quality updates
+
+Three targeted changes, none of which touch FIT/GAP thresholds or any
+V3.6.1 safety rule:
+
+- **Market rotation** (`scripts/acquisition_worker.py: build_market_rotation`/
+  `pick_discovery_cells`) is now city-major (interleaves niches) and
+  tier-weighted (a smooth weighted round-robin over `config/niches.yaml`'s
+  existing `tier` field) instead of a plain niche-major loop -- the old
+  version could spend an entire run's discovery budget inside one niche's
+  contiguous city block (confirmed on 2026-09-02, when two production
+  passes explored almost nothing but `family_law`). Every configured niche
+  is still selected over time -- never fully excluded, just weighted.
+  `config/acquisition.yaml: discovery_markets.niches` was also broadened
+  (added `foundation_repair`, `estate_law`, `moving_relocation`).
+- **Cheap prequalification**: `scripts/discover_prospects.py: filter_candidates`
+  now also drops a candidate whose OWN discovery-stage
+  `commercial_value_signal` is `"low"` (previously only `"none"` was
+  dropped) before spending three more expensive Claude calls on it. This
+  does not add a review-count/years-in-business/rating threshold --
+  empirical analysis of 2026-09-02's real outcomes found niche tier, not
+  those fields, was what actually correlated with low FIT (see
+  `reports/V3.7-ACQUISITION-QUALITY-REPORT.md`).
+- **Bounded timeout retry**: `scripts/acquisition_worker.py: claude_research`
+  now retries a `ClaudeTimeout` exactly once (`config/acquisition.yaml:
+  reliability.max_timeout_retries`) before propagating as a per-lead/
+  per-cell failure -- never for any other error type, never more than
+  once. `max_claude_call_seconds_research`/`_short` were also bumped
+  (300s/120s) after the same production run showed calls landing right at
+  the old caps.
+
+Ranking-evidence ingestion and re-evaluation (also V3.7) are documented in
+their own section below, after the READY_TO_SEND handoff.
+
 ## Lead Engine daily run — what it actually automates
 
 ### V3.5 (current): the Claude acquisition worker runs first
@@ -153,6 +187,51 @@ subject/body, the wedge summary, FIT/GAP snapshot, and the planned send
 window — enough to act on without redoing any SEO/intelligence analysis.
 It never contains credentials. Format reference:
 `data/fixtures/example_ready_to_send.jsonl`.
+
+## Ranking evidence ingestion + deterministic re-evaluation (V3.7)
+
+Claude cannot reliably obtain a real Google Maps/organic rank itself
+(`config/opportunity_router.yaml`'s `never_auto_run` already excludes
+`claude-seo:seo-dataforseo`/`seo-google`, and the acquisition worker's
+`--restricted` profile has no tool for it either). Two human-operated CLI
+scripts close that gap — neither is ever called by
+`scripts/acquisition_worker.py` or any unattended Claude subprocess, and
+neither is given any SEMrush/Google credential:
+
+- **`scripts/import_ranking_observation.py`** — the clean, minimal
+  external-enrichment interface (`schemas/ranking_evidence_observation.schema.json`):
+  `maps_position`, `organic_position`, `query`, `location`, `observed_at`,
+  `source` at minimum. Accepts a manually-checked Maps/Search observation
+  or a single fact hand-transcribed from a real SEMrush export, one at a
+  time or as a JSON batch file. Normalizes into the same
+  `data/rankings/<market_id>.csv` storage `scripts/import_rankings.py`
+  (the pre-existing bulk CSV/Semrush-export importer, unchanged) already
+  uses — nothing duplicated. A missing `maps_position`/`organic_position`
+  is never converted into a guessed value; an observation must supply at
+  least one to be accepted, and neither field is ever inferred.
+- **`scripts/reevaluate_needs_enrichment.py`** — once new ranking data
+  exists for a `NEEDS_ENRICHMENT` lead's market, fills in ONLY the
+  currently-null `maps_position`/`organic_position` field(s) (never
+  overwrites an existing value), appends a `ranking_reevaluations`
+  provenance entry to the lead's `qualification_v3.json` (source,
+  observed_at, fields added — every prior section, e.g. `fit`/`gap`/
+  `buying_signals`, is left in place, never deleted), then re-runs the
+  exact same deterministic chain a first-time pass already uses
+  unchanged — `assess_google_gap.py` → `assess_commercial_fit.py` →
+  `qualify_leads.py --v3` — so the lead is re-routed to
+  `QUALIFIED`/`HIGH_PRIORITY`/`MANUAL_REVIEW`/`REJECTED` exactly as if the
+  ranking data had been available on day one. No re-discovery, no
+  re-research, no Claude call. (The pre-existing `scripts/rescore_leads.py`
+  is the V2-only equivalent — it does not understand the V3.1 FIT/GAP
+  track and is unchanged/still V2-only; this new script is what a V3.1+
+  `NEEDS_ENRICHMENT` lead actually needs.)
+
+```
+python3 scripts/import_ranking_observation.py --niche roofing --location "Columbus, OH" \
+    --query "roof replacement columbus oh" --maps-position 6 --observed-at 2026-09-06 \
+    --source manual_maps_check --business-name "..." --domain "..."
+python3 scripts/reevaluate_needs_enrichment.py --id <slug>        # or --market <market_id> / --all
+```
 
 ## V3.6 shared handoff bridge
 

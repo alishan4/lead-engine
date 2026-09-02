@@ -28,6 +28,30 @@ who would be a commercially attractive, contactable outreach target.
 - Anything you cannot find a real, live website or Google Business Profile
   for.
 
+## Prefer established, substantial operations (V3.7)
+
+Among businesses that clear the checks below, prefer ones with real,
+observable evidence of operating substance -- enough that they could
+plausibly justify hiring outside help for their marketing. Look for and
+note in `source_notes` when you find it:
+- Multiple technicians/trucks/attorneys/locations mentioned on the site,
+  GBP listing, or a credible directory (e.g. "our team of 8 technicians,"
+  a multi-attorney firm bio page, a "locations" page listing more than one
+  address).
+- A credible, independently-corroborated operating history (years in
+  business, an "established in ____" claim backed by more than one
+  source).
+- A real, maintained website with distinct service pages (not a single
+  thin landing page).
+
+This is a preference among otherwise-eligible candidates, not a new
+required field -- **never invent an employee count, technician count,
+location count, revenue figure, or years-in-business claim you did not
+actually observe.** A genuinely solo/small operation that otherwise clears
+every check above is still a valid candidate; just note when you did NOT
+find evidence of greater scale (e.g. "single-location, no evidence of
+multiple providers found") rather than implying scale that isn't there.
+
 ## What to check per candidate before including it
 1. It is a real, currently-operating business (live site or active GBP
    listing).

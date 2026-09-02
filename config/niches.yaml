@@ -187,6 +187,26 @@ niches:
       - invisalign
       - general-dentistry
 
+  moving_relocation:
+    label: "Moving / Relocation"
+    high_value: true
+    tier: 2  # V3.7: high ticket per job (especially long-distance/full-service), moderate outreach
+             # saturation -- added to broaden acquisition beyond legal-services concentration
+             # (see reports/V3.7-ACQUISITION-QUALITY-REPORT.md). Not tier 1: demand is less
+             # uniformly emergency-driven than restoration/HVAC/roofing, so scored more
+             # conservatively pending real evidence of buying-signal availability in this niche.
+    money_keywords:
+      - "moving company"
+      - "long distance movers"
+      - "local movers"
+      - "full service moving company"
+    typical_service_pages:
+      - local-moving
+      - long-distance-moving
+      - packing-services
+      - storage
+      - commercial-moving
+
   other_high_value_local:
     label: "Other High-Value Local Service"
     high_value: false # set true per-lead override if commercial_value_signal supports it

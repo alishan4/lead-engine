@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ranking_evidence_observation.schema.json",
+  "title": "RankingEvidenceObservation",
+  "description": "V3.7 -- the clean, minimal external enrichment interface for one factual Google-visibility observation that Claude cannot reliably obtain itself (a live Maps/organic rank check). Consumed by scripts/import_ranking_observation.py, which normalizes it into the existing schemas/ranking_snapshot.schema.json storage at data/rankings/<market_id>.csv -- the same file scripts/reevaluate_needs_enrichment.py and (unchanged) scripts/rescore_leads.py read. This schema intentionally exposes only the fields a human or an external tool (Google Maps itself, or a SEMrush export a human is transcribing) can actually supply -- it is never produced by Claude, and never by any script in this repository automatically.",
+  "type": "object",
+  "required": ["query", "location", "observed_at", "source"],
+  "properties": {
+    "business_name": {"type": ["string", "null"], "description": "Needed (with or in place of domain) to match this observation to a prospect record -- see scripts/rescore_leads.py: find_ranking_match"},
+    "domain": {"type": ["string", "null"], "description": "Preferred match key over business_name when known -- more reliable than a name match"},
+    "maps_position": {
+      "type": ["integer", "null"],
+      "description": "Exact observed local-pack/Maps rank for `query` at `location`. Null means genuinely not observed -- NEVER write null-because-not-ranked-in-top-N as a specific number just past the captured range, and never leave this unset to imply a poor position. UNKNOWN stays UNKNOWN until real evidence is supplied."
+    },
+    "organic_position": {
+      "type": ["integer", "null"],
+      "description": "Exact observed organic SERP rank for `query`. Same null-means-unknown rule as maps_position."
+    },
+    "query": {"type": "string", "description": "The exact search query/keyword this observation is for -- e.g. 'emergency roof repair columbus oh'. Never blend multiple queries into one observation."},
+    "location": {"type": "string", "description": "Either a market_id slug (e.g. 'roofing-columbus-oh', matching data/markets/<market_id>/) or a plain 'City, ST' string -- scripts/import_ranking_observation.py resolves either form to the canonical market_id using the prospect's own niche/city/state."},
+    "observed_at": {"type": "string", "format": "date-time", "description": "When this rank was actually observed/checked -- not the import time. Freshness checks (config/limits.yaml: ranking_freshness_days) key off this."},
+    "source": {
+      "type": "string",
+      "enum": ["manual_maps_check", "semrush", "google_local_capture", "manual_serp_check"],
+      "description": "Real provenance of the observation -- a human manually checking Google Maps/Search, or a fact transcribed from a real Semrush export/screenshot. Never 'estimated' or 'assumed'."
+    },
+    "notes": {"type": ["string", "null"], "description": "Free-text context, e.g. device/location used for the manual check, or why only one of maps_position/organic_position was observed"}
+  }
+}

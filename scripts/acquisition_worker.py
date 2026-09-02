@@ -141,10 +141,32 @@ def record_failure(ctx, pid, stage, reason):
 def claude_research(ctx, prompt, schema_name_or_dict, timeout_key="research"):
     """Wraps claude_invoke.run_claude with the config-driven timeout/budget.
     ClaudeAuthRequired always propagates (fail-closed, mid-run auth loss
-    must stop the run, not be treated as one lead's failure)."""
+    must stop the run, not be treated as one lead's failure).
+
+    V3.7: a real ClaudeTimeout is retried exactly once (config/acquisition.yaml:
+    reliability.max_timeout_retries, default 1) before propagating -- found
+    in production on 2026-09-02 that a research-heavy WebSearch call landing
+    right at the cap is common enough to be worth one bounded retry, not a
+    sign of a permanently broken call. Never retried for any other error
+    type (ClaudeInvocationError/malformed response won't be fixed by
+    retrying blindly), and still bounded -- after the retry is exhausted,
+    the caller's existing per-lead/per-cell try/except records the failure
+    exactly as before; the batch is never blocked."""
     schema = schema_name_or_dict if isinstance(schema_name_or_dict, dict) else load_schema(schema_name_or_dict)
     timeout_s = ctx.cfg[f"max_claude_call_seconds_{timeout_key}"]
-    return run_claude(prompt, json_schema=schema, timeout_s=timeout_s, max_budget_usd=ctx.cfg["max_budget_usd_per_call"])
+    budget = ctx.cfg["max_budget_usd_per_call"]
+    reliability = ctx.cfg.get("reliability", {})
+    max_retries = reliability.get("max_timeout_retries", 0) if reliability.get("retry_on_timeout") else 0
+
+    attempt = 0
+    while True:
+        try:
+            return run_claude(prompt, json_schema=schema, timeout_s=timeout_s, max_budget_usd=budget)
+        except ClaudeTimeout:
+            if attempt >= max_retries:
+                raise
+            attempt += 1
+            ctx.log(f"  ~ claude -p timed out at {timeout_s}s -- retrying (attempt {attempt + 1}/{max_retries + 1})")
 
 
 # --------------------------------------------------------------------------
@@ -430,17 +452,110 @@ def outreach_capacity_remaining(ctx):
 # Fresh discovery
 # --------------------------------------------------------------------------
 
+# V3.7: niche tier (config/niches.yaml -- the existing V3.1 FIT
+# niche_economics axis, not a new concept) sets how many "slots" a niche
+# gets in one pass of the interleaved rotation below. Empirically motivated:
+# 2026-09-02's two production passes found niche tier, not review count or
+# years-in-business, was the dominant correlate of low FIT (see
+# reports/V3.7-ACQUISITION-QUALITY-REPORT.md Sec.A) -- every tier-2 niche
+# candidate landed at FIT 28-44 regardless of review count/rating/years,
+# while the single tier-1 candidate scored highest (56). Every tier still
+# gets at least 1 slot -- a niche is never fully excluded from the rotation.
+TIER_ROTATION_WEIGHT = {1: 3, 2: 2, 3: 1}
+
+
+def niche_tier(niche, niches_cfg):
+    return (niches_cfg.get("niches") or {}).get(niche, {}).get("tier", 3)
+
+
+def niche_rotation_weight(niche, niches_cfg):
+    return TIER_ROTATION_WEIGHT.get(niche_tier(niche, niches_cfg), 1)
+
+
+def niche_rotation_weight_for_tier(tier):
+    return TIER_ROTATION_WEIGHT.get(tier, 1)
+
+
+def build_market_rotation(niches, cities, niches_cfg):
+    """
+    Pure: returns every (niche, city, state) cell exactly once, city-major
+    order (all niches for city[0], then all niches for city[1], ...) so
+    that consecutive entries cycle through DIFFERENT niches -- never a long
+    contiguous run of the same niche, which is what let 2026-09-02's two
+    production passes explore almost nothing but family_law (the old
+    niche-major loop put an entire niche's 12 cities in one contiguous
+    block). Full coverage is preserved -- every cell still appears exactly
+    once; niche_rotation_weight is applied separately, as a priority SORT
+    over whichever cells a given run actually selects (see
+    pick_discovery_cells), not by duplicating cells here -- there is no
+    "explore a cell twice" concept in this one-shot-per-cell architecture
+    (a cell is permanently skipped once data/markets/<slug>/ exists), so
+    weighting has to act on selection order, not on representation count.
+    """
+    return [(n, c["city"], c["state"]) for c in cities for n in niches]
+
+
+def weighted_tier_sequence(weights, length):
+    """
+    Classic smooth-weighted-round-robin: returns `length` tier ids,
+    interleaved proportionally to `weights` (e.g. {1: 3, 2: 2} over 5 slots
+    gives a 3:2 mix, not "all of tier 1 first, then tier 2"). Deterministic,
+    no randomness -- same inputs always produce the same sequence.
+    """
+    counters = {t: 0.0 for t in weights}
+    total = sum(weights.values())
+    seq = []
+    for _ in range(length):
+        for t in counters:
+            counters[t] += weights[t]
+        pick = max(counters, key=lambda t: (counters[t], weights[t]))
+        counters[pick] -= total
+        seq.append(pick)
+    return seq
+
+
 def pick_discovery_cells(ctx, day_ordinal):
     dm = ctx.cfg["discovery_markets"]
     niches, cities = dm["niches"], dm["cities"]
+    niches_cfg = load_yaml("niches.yaml")
     existing_markets = {d.name for d in (DATA / "markets").iterdir()} if (DATA / "markets").exists() else set()
     from _lib import market_slug
-    all_cells = [(n, c["city"], c["state"]) for n in niches for c in cities]
+
+    all_cells = build_market_rotation(niches, cities, niches_cfg)
     n = len(all_cells)
     ordered = [all_cells[(day_ordinal + i) % n] for i in range(n)]
     fresh = [cell for cell in ordered if market_slug(*cell) not in existing_markets]
-    chosen = (fresh or ordered)[: ctx.cfg["max_fresh_market_cells_per_run"]]
-    return chosen
+    pool = fresh or ordered
+    total_slots = ctx.cfg["max_fresh_market_cells_per_run"]
+
+    # V3.7: allocate this run's limited cell budget across tiers by a
+    # smooth WEIGHTED mix (e.g. roughly 3:2 tier-1:tier-2 for the default
+    # weights), not an absolute "always tier 1 first" priority -- the
+    # latter would let tier-1 niches exhaust the ENTIRE multi-city pool
+    # before a tier-2 niche (family_law, plumbing, estate_law,
+    # moving_relocation) is ever explored again, which is functionally a
+    # niche exclusion even though no single candidate was ever globally
+    # rejected. Cells stay in rotation order within their own tier, so
+    # day-to-day variety is preserved.
+    by_tier = {}
+    for cell in pool:
+        by_tier.setdefault(niche_tier(cell[0], niches_cfg), []).append(cell)
+    weights = {t: niche_rotation_weight_for_tier(t) for t in by_tier}
+
+    tier_iters = {t: iter(cells) for t, cells in by_tier.items()}
+    chosen, chosen_set = [], set()
+    for t in weighted_tier_sequence(weights, total_slots * 4):  # oversample the sequence to allow skipping exhausted tiers
+        if len(chosen) >= total_slots:
+            break
+        cell = next(tier_iters[t], None)
+        if cell is not None and cell not in chosen_set:
+            chosen.append(cell)
+            chosen_set.add(cell)
+
+    if len(chosen) < total_slots:  # every tier exhausted before filling the budget -- backfill from whatever remains
+        leftover = sorted((c for c in pool if c not in chosen_set), key=lambda c: niche_tier(c[0], niches_cfg))
+        chosen += leftover[: total_slots - len(chosen)]
+    return chosen[:total_slots]
 
 
 DISCOVERY_TIMEOUT_KEY = "research"

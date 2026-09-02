@@ -59,9 +59,26 @@ def filter_candidates(candidates, known_keys):
     """
     Pure function -- unit-testable without file I/O. Drops: explicit
     non-independent ownership (obvious chain/franchise the researcher
-    already identified as non-independent), no commercial value, and
+    already identified as non-independent), no/low commercial value, and
     anything matching an already-known business by name or domain. Returns
     (kept, dropped_with_reason).
+
+    V3.7 cheap prequalification: `commercial_value_signal == "low"` is now
+    also dropped here, not just "none" -- this is discovery's OWN real-time
+    research judgment (required, evidence-backed, by prompts/prospect-
+    discovery.md), not a manufactured signal, so acting on it before
+    spending 3 more expensive Claude calls (verify_business, buying_signals,
+    contactability) per candidate is legitimate cost discipline, not
+    fabrication. Every drop is still fully logged with its reason (see
+    scripts/acquisition_worker.py's discovery_phase output) -- never
+    silently discarded. Deliberately does NOT filter on review_count/
+    rating/years_in_business: empirical analysis of 2026-09-02's real
+    outcomes (reports/V3.7-ACQUISITION-QUALITY-REPORT.md Sec.B) found niche
+    tier, not those confirmed-but-often-null fields, was what actually
+    correlated with low FIT -- a review-count/years threshold would have
+    incorrectly screened out several candidates that scored fine, and
+    "UNKNOWN != FALSE" forbids treating a missing (not low) value as a
+    negative signal anyway.
     """
     kept, dropped = [], []
     for c in candidates:
@@ -72,8 +89,9 @@ def filter_candidates(candidates, known_keys):
         if c.get("independently_owned") is False:
             dropped.append((c, "researcher identified this as a non-independently-operated chain/franchise location"))
             continue
-        if c.get("commercial_value_signal") == "none":
-            dropped.append((c, "commercial_value_signal is none"))
+        if c.get("commercial_value_signal") in ("none", "low"):
+            dropped.append((c, f"commercial_value_signal is {c.get('commercial_value_signal')} -- discovery's own "
+                                "research already found weak commercial value, not worth further research spend"))
             continue
         if not c.get("google_dependency_evidence"):
             dropped.append((c, "no stated Google-dependency evidence"))

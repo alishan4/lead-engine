@@ -38,7 +38,12 @@ CANONICAL_FIELDS = [
 # import mechanism -- a human typing up numbers they read off a real Semrush
 # report is still "semrush" data, not a fabricated "manual_csv" guess. Widen
 # beyond the three original mechanism-only values via --source-override.
-KNOWN_SOURCES = {"semrush_csv", "manual_csv", "json_snapshot", "semrush", "google_local_capture"}
+KNOWN_SOURCES = {
+    "semrush_csv", "manual_csv", "json_snapshot", "semrush", "google_local_capture",
+    # V3.7 -- scripts/import_ranking_observation.py's clean single-observation
+    # interface (schemas/ranking_evidence_observation.schema.json) uses these.
+    "manual_maps_check", "manual_serp_check",
+}
 
 # Semrush "Organic Research > Positions" export column names (case-insensitive,
 # with a few historical variants) -> canonical field.
