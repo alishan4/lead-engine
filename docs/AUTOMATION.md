@@ -210,7 +210,14 @@ google_sheets`):
 3. Create a private Google Sheet (or reuse one) with two tabs named to
    match `config/handoff.yaml: google_sheets.email_ready_tab`/
    `contact_form_ready_tab` (defaults: `EMAIL_READY`/`CONTACT_FORM_READY`),
-   plus a `RESULTS` tab for ChatGPT to write result events into.
+   plus a results tab named to match `google_sheets.results_tab` (defaults
+   to `RESULTS` if the key is omitted — safe for a config saved before
+   V3.6.1) for ChatGPT to write result events into. **You do not need to
+   add a header row yourself** — if the tab is completely empty, the first
+   `import_outreach_results.py` run writes the canonical header
+   (`scripts/handoff_lib.py: RESULT_EVENT_COLUMNS`, taken directly from
+   `schemas/outreach_result_event.schema.json`) automatically; a tab that
+   already has any content is never touched by this step.
 4. Share that Sheet with the service account's `client_email` as **Editor**
    — never publish it with a public link.
 5. Set `config/handoff.yaml: google_sheets.service_account_file` (the JSON
@@ -226,12 +233,21 @@ stays up to date and authoritative, and nothing is lost (see
 
 **Result events flow back in** via `data/outreach/outreach_results.jsonl`
 (local fallback — `schemas/outreach_result_event.schema.json`) or, for the
-Sheets backend, its `RESULTS` tab. `scripts/import_outreach_results.py`
+Sheets backend, its results tab. `scripts/import_outreach_results.py`
 applies each event idempotently — the exact same Gmail message/thread
 event is never double-applied, and a stale/out-of-order event can never
 regress a field a newer one already set (`scripts/handoff_lib.py:
-event_dedup_key`/`apply_event`). A `SUPPRESSED` event also registers in
-the existing V3.3 suppression registry so the rest of the pipeline
+event_dedup_key`/`apply_event`). **Every event is validated
+(`scripts/handoff_lib.py: validate_event`) and processed inside its own
+isolated `try`/`except` (V3.6.1)** — a row with a missing `lead_id`,
+missing `event_type`, an unrecognized `event_type`, or any other
+malformed/truncated shape (Google Sheets silently drops trailing empty
+cells, which can shorten a row) is recorded as a failure and never blocks
+any other event in the same batch; an unknown *extra* field on an
+otherwise-valid event is tolerated, not rejected, so a future field
+ChatGPT starts sending doesn't break ingestion. A `SUPPRESSED` event also
+registers in the existing V3.3 suppression registry so the rest of the
+pipeline
 respects it on the next run.
 
 ## ChatGPT / Gmail boundary

@@ -41,6 +41,17 @@ EXTERNAL_OWNED_FIELDS = frozenset({
 EMAIL_CHANNEL_TYPES = ("NAMED_EMAIL", "COMPANY_EMAIL")
 FORM_CHANNEL_TYPE = "CONTACT_FORM"
 
+# V3.6.1 -- the canonical RESULTS-tab column order, taken directly from
+# schemas/outreach_result_event.schema.json's own property order (never a
+# second, conflicting schema invented here). This is what
+# GoogleSheetsBackend.import_results() writes when it finds a completely
+# empty RESULTS tab, and the reference order for anyone setting the tab up
+# by hand.
+RESULT_EVENT_COLUMNS = (
+    "lead_id", "event_type", "event_at", "gmail_message_id", "gmail_thread_id",
+    "reason", "note", "source",
+)
+
 # event_type -> which field it updates. SUPPRESSED and HUMAN_HANDOFF target
 # suppression_reason/human_review instead of one of the four lifecycle
 # state columns -- everything else updates exactly one of
@@ -212,6 +223,33 @@ def merge_row(existing_row, lead_engine_fields, now=None):
     return row
 
 
+def validate_event(event):
+    """
+    Pure: minimum-shape validation for one external result event, run
+    BEFORE dedup/apply so scripts/import_outreach_results.py can isolate a
+    malformed/invalid row as its own failure without touching any other
+    event in the batch (V3.6.1 -- "one malformed result event must never
+    abort or block other valid events").
+
+    Deliberately permissive about EXTRA/unknown fields on the event dict --
+    schema evolution (a future field ChatGPT starts sending) must not turn
+    into a rejection. Only checks what apply_event()/event_dedup_key()
+    actually require: a real lead_id, and a real, recognized event_type.
+    Returns (True, None) or (False, reason).
+    """
+    if not isinstance(event, dict):
+        return False, "row is not a valid event object (malformed/truncated Google Sheets row)"
+    lead_id = event.get("lead_id")
+    if not lead_id or not isinstance(lead_id, str):
+        return False, "missing lead_id"
+    event_type = event.get("event_type")
+    if not event_type or not isinstance(event_type, str):
+        return False, "missing event_type"
+    if event_type not in EVENT_STATE_FIELD:
+        return False, f"unrecognized event_type {event_type!r}"
+    return True, None
+
+
 def event_dedup_key(event):
     """
     Stable identity for one external event. When a Gmail message/thread id
@@ -220,11 +258,19 @@ def event_dedup_key(event):
     with slightly different formatting is still recognized as identical
     ("never duplicate the same Gmail message/thread event"). Otherwise falls
     back to including event_at.
+
+    Uses .get() throughout (never bracket access) so this can never itself
+    raise on a malformed event -- callers should still run validate_event()
+    first; this is defense in depth, not a substitute for it. Only called
+    on events that already passed validate_event() in
+    scripts/import_outreach_results.py, so lead_id/event_type are always
+    real strings in practice.
     """
     mid, tid = event.get("gmail_message_id"), event.get("gmail_thread_id")
+    lead_id, event_type = event.get("lead_id"), event.get("event_type")
     if mid or tid:
-        return (event["lead_id"], event["event_type"], mid, tid)
-    return (event["lead_id"], event["event_type"], event.get("event_at"))
+        return (lead_id, event_type, mid, tid)
+    return (lead_id, event_type, event.get("event_at"))
 
 
 def apply_event(row, event, now=None):
@@ -237,7 +283,7 @@ def apply_event(row, event, now=None):
     reason).
     """
     now = now or now_iso()
-    event_type = event["event_type"]
+    event_type = event.get("event_type")
     field = EVENT_STATE_FIELD.get(event_type)
     if field is None:
         return row, False, f"unknown event_type {event_type!r} -- not in EVENT_STATE_FIELD, ignored"

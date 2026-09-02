@@ -169,6 +169,9 @@ class GoogleSheetsBackend(HandoffBackend):
     JSON key to a path OUTSIDE this repo (or anywhere already covered by
     .gitignore's credentials*.json/service-account*.json patterns), and set
     `service_account_file` + `spreadsheet_id` in config/handoff.yaml.
+    `results_tab` (default `"RESULTS"` if unset, for backward compatibility
+    with a config predating this key) names the tab ChatGPT/Gmail-side
+    automation writes result events into.
 
     Dependencies (`google-api-python-client`, `google-auth`) are imported
     lazily inside methods, never at module load time -- this file, and
@@ -264,15 +267,34 @@ class GoogleSheetsBackend(HandoffBackend):
         return rows
 
     def import_results(self):
-        """Reads a `RESULTS` tab (ChatGPT/Gmail-side writes result events
-        there) and returns them as raw dicts for
-        scripts/import_outreach_results.py to apply -- same idempotent path
-        as the local file inbox. Not exercised without real credentials;
-        covered by contract-level tests only."""
+        """Reads the results tab (`config/handoff.yaml:
+        google_sheets.results_tab`, defaulting to `RESULTS` for backward
+        compatibility with a config predating this key) -- ChatGPT/Gmail-
+        side writes result events there -- and returns them as raw dicts
+        for scripts/import_outreach_results.py to apply idempotently, with
+        per-event validation/isolation (see handoff_lib.validate_event).
+
+        V3.6.1: safely handles a completely empty tab by initializing it
+        with the canonical header (handoff_lib.RESULT_EVENT_COLUMNS, taken
+        from schemas/outreach_result_event.schema.json -- no second,
+        conflicting schema invented here) -- there is nothing to overwrite
+        in that case, since the tab is empty. A tab that already has ANY
+        content is never touched here; its existing header (whatever it
+        is) is used as-is to parse subsequent rows, exactly as before --
+        this method never overwrites a legitimate existing row.
+        """
+        from handoff_lib import RESULT_EVENT_COLUMNS
         service, spreadsheet_id = self._client()
-        resp = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range="RESULTS!A:Z").execute()
+        tab_name = self.cfg.get("results_tab") or "RESULTS"
+        resp = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=f"{tab_name}!A:Z").execute()
         rows = resp.get("values", [])
         if not rows:
+            # Nothing here at all -- safe to self-heal the canonical header
+            # so the next ChatGPT-written event row is actually parseable.
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id, range=f"{tab_name}!A1",
+                valueInputOption="RAW", body={"values": [list(RESULT_EVENT_COLUMNS)]},
+            ).execute()
             return []
         header, body = rows[0], rows[1:]
         return [dict(zip(header, r)) for r in body]

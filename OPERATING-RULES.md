@@ -119,6 +119,16 @@ only `scripts/import_outreach_results.py`, applying a real external event
 than whatever is already recorded for that field (never lets a stale
 re-import regress a field a newer event already set).
 
+**One malformed result event can never abort or block another (V3.6.1).**
+Every incoming event is validated (`scripts/handoff_lib.py: validate_event`
+— requires a real `lead_id` and a recognized `event_type`) and processed
+inside its own isolated exception boundary in
+`scripts/import_outreach_results.py`. A missing `lead_id`, missing
+`event_type`, unrecognized `event_type`, or a malformed/truncated Sheets
+row is recorded as a failure and the batch continues — the same
+failure-isolation guarantee the rest of this pipeline already holds for a
+single lead's research failure, extended to a single external event.
+
 ---
 
 ## 3. Non-negotiable pipeline rules (unchanged since V1)

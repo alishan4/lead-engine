@@ -35,6 +35,11 @@ google_sheets:
   spreadsheet_id: null          # the private Sheet's ID, from its URL
   email_ready_tab: "EMAIL_READY"
   contact_form_ready_tab: "CONTACT_FORM_READY"
+  # V3.6.1: the tab ChatGPT/Gmail-side automation writes result events into.
+  # Defaults to "RESULTS" (GoogleSheetsBackend.import_results() falls back
+  # to that literal when this key is absent) so a config saved before this
+  # key existed keeps working unchanged.
+  results_tab: "RESULTS"
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 
 # Result-event vocabulary this system will import from

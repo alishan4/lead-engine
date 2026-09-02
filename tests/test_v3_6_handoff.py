@@ -196,6 +196,17 @@ class IsolatedHandoffMixin:
         self.cfg = json.loads(json.dumps(self.cfg))  # deep copy
         self.cfg["local_backend"]["dir"] = "handoff"  # LocalFileBackend/export_tracker_csv resolve this against
                                                         # DATA (patched below), matching real production behavior
+        # V3.6.1: force local-only regardless of this machine's real,
+        # on-disk config/handoff.yaml -- if that file has ever been pointed
+        # at a real Google Sheet (as it legitimately is on a machine where
+        # V3.6's live verification ran), tests must NEVER inherit that or
+        # they silently make real network calls. Every test that wants to
+        # exercise the google_sheets path builds its OWN explicit,
+        # unconfigured copy (see TestIdempotentSyncAndLocalFallback) --
+        # never the ambient real credentials.
+        self.cfg["backend"] = "local"
+        self.cfg["google_sheets"]["service_account_file"] = None
+        self.cfg["google_sheets"]["spreadsheet_id"] = None
 
         self._orig_sync = {k: getattr(sync_handoff, k) for k in ("PROSPECTS", "LEADS", "OUTREACH")}
         self._orig_ior = {k: getattr(ior, k) for k in ("RESULTS_PATH",)}
@@ -476,6 +487,282 @@ class TestScopeAndCsvColumns(unittest.TestCase):
             text = (SCRIPTS / fname).read_text()
             for v36_mod in ("handoff_lib", "handoff_backend", "sync_handoff", "import_outreach_results"):
                 self.assertNotIn(v36_mod, text)
+
+
+# ---------------------------------------------------------------------------
+# V3.6.1 -- GoogleSheetsBackend RESULTS-tab handling (fake Sheets API, no
+# network call, no real credentials).
+# ---------------------------------------------------------------------------
+class _FakeExec:
+    def __init__(self, result):
+        self._result = result
+
+    def execute(self):
+        return self._result
+
+
+class _FakeSheetsValues:
+    """Minimal stand-in for `service.spreadsheets().values()`. `tabs` is
+    {tab_name: [[row...], ...]} (row 0 is the header, if any)."""
+
+    def __init__(self, tabs):
+        self.tabs = dict(tabs)
+        self.update_calls = []
+
+    def get(self, spreadsheetId, range):
+        tab = range.split("!")[0]
+        data = self.tabs.get(tab, [])
+        return _FakeExec({"values": data} if data else {})
+
+    def update(self, spreadsheetId, range, valueInputOption, body):
+        tab = range.split("!")[0]
+        self.update_calls.append((tab, range, body["values"]))
+        self.tabs[tab] = body["values"]
+        return _FakeExec({})
+
+
+class _FakeSheetsService:
+    def __init__(self, tabs):
+        self._values = _FakeSheetsValues(tabs)
+
+    def spreadsheets(self):
+        return self
+
+    def values(self):
+        return self._values
+
+
+def _sheets_backend(results_tab="__unset__"):
+    cfg = {
+        "service_account_file": "/fake/path.json", "spreadsheet_id": "sid",
+        "scopes": ["https://www.googleapis.com/auth/spreadsheets"],
+        "email_ready_tab": "EMAIL_READY", "contact_form_ready_tab": "CONTACT_FORM_READY",
+    }
+    if results_tab != "__unset__":
+        cfg["results_tab"] = results_tab
+    return hb.GoogleSheetsBackend({"google_sheets": cfg})
+
+
+class TestGoogleSheetsResultsTabHandling(unittest.TestCase):
+    """Items: empty RESULTS tab, header creation/validation, configurable
+    results tab, backward-compatible default RESULTS tab."""
+
+    def test_empty_results_tab_returns_no_events(self):
+        backend = _sheets_backend()
+        fake = _FakeSheetsService({})  # RESULTS tab has nothing at all
+        with patch.object(hb.GoogleSheetsBackend, "_client", return_value=(fake, "sid")):
+            events = backend.import_results()
+        self.assertEqual(events, [])
+
+    def test_empty_results_tab_self_heals_canonical_header(self):
+        backend = _sheets_backend()
+        fake = _FakeSheetsService({})
+        with patch.object(hb.GoogleSheetsBackend, "_client", return_value=(fake, "sid")):
+            backend.import_results()
+        self.assertEqual(len(fake._values.update_calls), 1)
+        tab, rng, values = fake._values.update_calls[0]
+        self.assertEqual(tab, "RESULTS")
+        self.assertEqual(values, [list(hl.RESULT_EVENT_COLUMNS)])
+
+    def test_canonical_columns_come_from_the_existing_result_event_schema(self):
+        # Never a second, invented schema -- exact field order from
+        # schemas/outreach_result_event.schema.json's own properties.
+        self.assertEqual(
+            hl.RESULT_EVENT_COLUMNS,
+            ("lead_id", "event_type", "event_at", "gmail_message_id", "gmail_thread_id", "reason", "note", "source"),
+        )
+
+    def test_configurable_results_tab_is_used(self):
+        backend = _sheets_backend(results_tab="MY_CUSTOM_RESULTS")
+        fake = _FakeSheetsService({})
+        with patch.object(hb.GoogleSheetsBackend, "_client", return_value=(fake, "sid")):
+            backend.import_results()
+        tab, rng, values = fake._values.update_calls[0]
+        self.assertEqual(tab, "MY_CUSTOM_RESULTS")
+
+    def test_backward_compatible_default_when_results_tab_key_absent(self):
+        backend = _sheets_backend(results_tab="__unset__")
+        self.assertNotIn("results_tab", backend.cfg)  # simulates a config saved before this key existed
+        fake = _FakeSheetsService({})
+        with patch.object(hb.GoogleSheetsBackend, "_client", return_value=(fake, "sid")):
+            backend.import_results()
+        tab, rng, values = fake._values.update_calls[0]
+        self.assertEqual(tab, "RESULTS")
+
+    def test_existing_populated_results_tab_is_never_overwritten(self):
+        existing_rows = [
+            list(hl.RESULT_EVENT_COLUMNS),
+            ["real-lead-1", "GMAIL_SENT", "2026-01-01T00:00:00+00:00", "MID", "TID", "", "", "chatgpt"],
+        ]
+        backend = _sheets_backend()
+        fake = _FakeSheetsService({"RESULTS": [list(r) for r in existing_rows]})
+        with patch.object(hb.GoogleSheetsBackend, "_client", return_value=(fake, "sid")):
+            events = backend.import_results()
+        self.assertEqual(fake._values.update_calls, [])  # never touched -- nothing overwritten
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["lead_id"], "real-lead-1")
+
+    def test_malformed_truncated_sheet_row_produces_a_partial_dict_not_a_crash(self):
+        """A real Google Sheets API response omits trailing empty cells --
+        this must not raise here; downstream validate_event() is what
+        rejects it."""
+        rows = [list(hl.RESULT_EVENT_COLUMNS), ["only-lead-id"]]  # truncated: only 1 of 8 columns present
+        backend = _sheets_backend()
+        fake = _FakeSheetsService({"RESULTS": rows})
+        with patch.object(hb.GoogleSheetsBackend, "_client", return_value=(fake, "sid")):
+            events = backend.import_results()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].get("lead_id"), "only-lead-id")
+        self.assertNotIn("event_type", events[0])  # dropped by truncation -- exactly the case validate_event must catch
+
+
+# ---------------------------------------------------------------------------
+# V3.6.1 -- handoff_lib.validate_event (pure)
+# ---------------------------------------------------------------------------
+class TestValidateEventPure(unittest.TestCase):
+    def test_valid_event_passes(self):
+        ok, reason = hl.validate_event({"lead_id": "p1", "event_type": "GMAIL_SENT", "event_at": now_iso()})
+        self.assertTrue(ok, reason)
+
+    def test_missing_lead_id_rejected(self):
+        ok, reason = hl.validate_event({"event_type": "GMAIL_SENT", "event_at": now_iso()})
+        self.assertFalse(ok)
+        self.assertIn("lead_id", reason)
+
+    def test_missing_event_type_rejected(self):
+        ok, reason = hl.validate_event({"lead_id": "p1", "event_at": now_iso()})
+        self.assertFalse(ok)
+        self.assertIn("event_type", reason)
+
+    def test_unrecognized_event_type_rejected(self):
+        ok, reason = hl.validate_event({"lead_id": "p1", "event_type": "NOT_A_REAL_EVENT_TYPE"})
+        self.assertFalse(ok)
+
+    def test_non_dict_row_rejected(self):
+        ok, reason = hl.validate_event(["not", "a", "dict"])
+        self.assertFalse(ok)
+
+    def test_extra_unknown_field_does_not_fail_validation(self):
+        ok, reason = hl.validate_event({"lead_id": "p1", "event_type": "GMAIL_SENT", "event_at": now_iso(),
+                                          "some_future_field_not_yet_known": "value"})
+        self.assertTrue(ok, reason)
+
+    def test_event_dedup_key_never_raises_on_malformed_event(self):
+        self.assertEqual(hl.event_dedup_key({}), (None, None, None))
+        self.assertEqual(hl.event_dedup_key({"lead_id": "p1"}), ("p1", None, None))
+
+
+# ---------------------------------------------------------------------------
+# V3.6.1 -- per-event failure isolation through the real
+# import_outreach_results.import_results() orchestration.
+# ---------------------------------------------------------------------------
+class TestMalformedEventIsolation(IsolatedHandoffMixin, unittest.TestCase):
+    def _seed_row(self, pid):
+        backend = hb.LocalFileBackend(self.cfg)
+        row = hl.merge_row(None, hl.build_lead_engine_fields(
+            make_prospect(pid), make_ready_row(pid), make_contact("NAMED_EMAIL", "VERIFIED"), None, None,
+            make_dossier(), LIMITS))
+        backend.export_ready([row], [])
+
+    def _run_import(self):
+        with patch("import_outreach_results.load_yaml", return_value=self.cfg):
+            return ior.import_results(logfn=lambda m: None)
+
+    def test_missing_lead_id_isolated_as_failure(self):
+        self._seed_row("p1")
+        append_jsonl(self.tmp / "outreach" / "outreach_results.jsonl",
+                     {"event_type": "GMAIL_SENT", "event_at": now_iso(), "source": "test"})
+        result = self._run_import()
+        self.assertEqual(result["events_applied"], 0)
+        self.assertEqual(result["events_rejected_invalid"], 1)
+        self.assertEqual(len(result["import_failures"]), 1)
+        self.assertIn("lead_id", result["import_failures"][0]["error"])
+
+    def test_missing_event_type_isolated_as_failure(self):
+        self._seed_row("p1")
+        append_jsonl(self.tmp / "outreach" / "outreach_results.jsonl",
+                     {"lead_id": "p1", "event_at": now_iso(), "source": "test"})
+        result = self._run_import()
+        self.assertEqual(result["events_applied"], 0)
+        self.assertEqual(result["events_rejected_invalid"], 1)
+        self.assertIn("event_type", result["import_failures"][0]["error"])
+
+    def test_malformed_truncated_row_isolated_as_failure(self):
+        self._seed_row("p1")
+        append_jsonl(self.tmp / "outreach" / "outreach_results.jsonl", {})  # nothing usable at all
+        result = self._run_import()
+        self.assertEqual(result["events_applied"], 0)
+        self.assertEqual(result["events_rejected_invalid"], 1)
+
+    def test_malformed_event_never_blocks_a_following_valid_event(self):
+        self._seed_row("p1")
+        events_path = self.tmp / "outreach" / "outreach_results.jsonl"
+        append_jsonl(events_path, {"event_type": "GMAIL_SENT"})  # malformed: no lead_id
+        append_jsonl(events_path, {"lead_id": "p1", "event_type": "GMAIL_SENT", "event_at": now_iso(),
+                                     "gmail_message_id": "MID1", "gmail_thread_id": "TID1", "source": "test"})
+        result = self._run_import()
+        self.assertEqual(result["events_rejected_invalid"], 1)
+        self.assertEqual(result["events_applied"], 1)
+        row = hb.LocalFileBackend(self.cfg).all_rows()["p1"]
+        self.assertEqual(row["gmail_state"], "GMAIL_SENT")
+
+    def test_multiple_malformed_mixed_with_multiple_valid_events(self):
+        self._seed_row("p1")
+        self._seed_row("p2")
+        events_path = self.tmp / "outreach" / "outreach_results.jsonl"
+        append_jsonl(events_path, {"event_type": "GMAIL_SENT"})                                    # malformed: no lead_id
+        append_jsonl(events_path, {"lead_id": "p1"})                                                # malformed: no event_type
+        append_jsonl(events_path, {"lead_id": "p1", "event_type": "GMAIL_SENT", "event_at": now_iso(),
+                                     "gmail_message_id": "M1", "gmail_thread_id": "T1", "source": "test"})  # valid
+        append_jsonl(events_path, {"lead_id": "ghost-lead", "event_type": "TOTALLY_BOGUS", "event_at": now_iso()})  # malformed: unrecognized type
+        append_jsonl(events_path, {"lead_id": "p2", "event_type": "NO_BOUNCE_DETECTED", "event_at": now_iso(),
+                                     "source": "test"})                                               # valid
+        result = self._run_import()
+        self.assertEqual(result["events_rejected_invalid"], 3)
+        self.assertEqual(result["events_applied"], 2)
+        rows = hb.LocalFileBackend(self.cfg).all_rows()
+        self.assertEqual(rows["p1"]["gmail_state"], "GMAIL_SENT")
+        self.assertEqual(rows["p2"]["delivery_state"], "NO_BOUNCE_DETECTED")
+
+    def test_valid_event_applies_through_full_orchestration(self):
+        self._seed_row("p1")
+        append_jsonl(self.tmp / "outreach" / "outreach_results.jsonl",
+                     {"lead_id": "p1", "event_type": "GMAIL_SENT", "event_at": now_iso(),
+                      "gmail_message_id": "M1", "gmail_thread_id": "T1", "source": "test"})
+        result = self._run_import()
+        self.assertEqual(result["events_applied"], 1)
+        self.assertEqual(result["events_rejected_invalid"], 0)
+        self.assertEqual(len(result["import_failures"]), 0)
+
+    def test_duplicate_valid_event_not_reapplied(self):
+        """The exact same event (same Gmail message/thread id) sitting in
+        the results file is re-read on every import call (the file is never
+        truncated/consumed) -- a second import run must apply it 0 times."""
+        self._seed_row("p1")
+        events_path = self.tmp / "outreach" / "outreach_results.jsonl"
+        event = {"lead_id": "p1", "event_type": "GMAIL_SENT", "event_at": now_iso(),
+                 "gmail_message_id": "M1", "gmail_thread_id": "T1", "source": "test"}
+        append_jsonl(events_path, event)
+        first = self._run_import()
+        self.assertEqual(first["events_applied"], 1)
+        second = self._run_import()
+        self.assertEqual(second["events_applied"], 0)
+        self.assertEqual(second["events_skipped_duplicate"], 1)
+
+    def test_stale_event_skipped_not_treated_as_failure(self):
+        self._seed_row("p1")
+        events_path = self.tmp / "outreach" / "outreach_results.jsonl"
+        append_jsonl(events_path, {"lead_id": "p1", "event_type": "GMAIL_SENT", "event_at": "2026-02-01T00:00:00+00:00",
+                                     "gmail_message_id": "M1", "gmail_thread_id": "T1", "source": "test"})
+        self._run_import()
+        append_jsonl(events_path, {"lead_id": "p1", "event_type": "SEND_FAILED", "event_at": "2026-01-01T00:00:00+00:00",
+                                     "source": "test"})  # older than the already-applied GMAIL_SENT
+        result = self._run_import()
+        self.assertEqual(result["events_applied"], 0)
+        self.assertEqual(result["events_skipped_stale"], 1)
+        self.assertEqual(len(result["import_failures"]), 0)  # stale is not a failure
+        row = hb.LocalFileBackend(self.cfg).all_rows()["p1"]
+        self.assertEqual(row["gmail_state"], "GMAIL_SENT")  # never regressed by the stale SEND_FAILED
 
 
 if __name__ == "__main__":
