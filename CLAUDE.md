@@ -29,12 +29,15 @@ email and does not hold Gmail credentials — see `OPERATING-RULES.md` §1.
    from (agent definitions, routing) but never edited.
 4. **Never commit real prospect/outreach data.** `data/leads/`,
    `data/prospects/`, `data/markets/`, `data/rankings/`, `data/outreach/`,
-   and `data/runtime/` are gitignored by design (see `.gitignore`) because
-   they accumulate real third-party contact information and operational
-   history. Use `data/fixtures/` for anything that needs to be committed
-   as an example. If you generate a new kind of runtime artifact, gitignore
-   it at the same time you create it — don't wait for a security pass to
-   catch it later.
+   `data/handoff/` (V3.6 shared queue + tracker CSVs), and `data/runtime/`
+   are gitignored by design (see `.gitignore`) because they accumulate real
+   third-party contact information and operational history. Use
+   `data/fixtures/` for anything that needs to be committed as an example.
+   If you generate a new kind of runtime artifact, gitignore it at the same
+   time you create it — don't wait for a security pass to catch it later.
+   This repo is private and must stay code-only: no real prospect/contact/
+   outreach records, no Google Sheets service-account keys, no OAuth
+   tokens, no Gmail cookies/session data, ever, under any filename.
 5. **Run the full test suite before and after any change**
    (`python3 -m unittest discover -s tests`). Do not alter a test merely
    to make a number match expectations — report the real result.
@@ -63,6 +66,14 @@ email and does not hold Gmail credentials — see `OPERATING-RULES.md` §1.
   ceilings/timeouts/budgets and orchestration for the unattended Claude
   research worker; see `OPERATING-RULES.md` §4's V3.5 update for the
   structural safety model before touching either.
+- `config/handoff.yaml` / `scripts/handoff_lib.py` / `scripts/handoff_backend.py`
+  / `scripts/sync_handoff.py` / `scripts/import_outreach_results.py` /
+  `scripts/export_tracker_csv.py` (V3.6) — the shared READY_TO_SEND queue
+  ChatGPT/Gmail-side automation consumes, and the path external Gmail
+  result events come back through. See `OPERATING-RULES.md` §1/§2's V3.6
+  updates before touching any of these — in particular, never let Lead
+  Engine's own sync write to the `EXTERNAL_OWNED_FIELDS` in
+  `schemas/handoff_row.schema.json`.
 - `reports/` — dated engineering reports for each build phase (V1 through
   V3.3). Real contact-channel identifiers (emails, phone numbers, personal
   names tied to real third-party businesses) are redacted from these

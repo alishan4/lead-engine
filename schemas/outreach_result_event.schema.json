@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "outreach_result_event.schema.json",
+  "title": "OutreachResultEvent",
+  "description": "One external (ChatGPT/Gmail-side) result event, appended to data/outreach/outreach_results.jsonl (local fallback) for scripts/import_outreach_results.py to apply idempotently. Lead Engine never produces these -- they represent real Gmail-side reconciliation/send/reply/bounce outcomes, which only Gmail (via ChatGPT) can observe. Never fabricated by this repository.",
+  "type": "object",
+  "required": ["lead_id", "event_type", "event_at", "source"],
+  "properties": {
+    "lead_id": {"type": "string", "description": "Must match a lead_id already present in the shared handoff queue"},
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "GMAIL_RECONCILED", "PRIOR_SENT_FOUND", "PRIOR_REPLY_FOUND", "PRIOR_BOUNCE_FOUND",
+        "DUPLICATE_FOUND", "SUPPRESSED", "SEND_WINDOW_CONFIRMED", "SEND_ATTEMPTED",
+        "GMAIL_SENT", "SEND_FAILED", "NO_BOUNCE_DETECTED", "DELIVERY_FAILED",
+        "REPLIED", "POSITIVE_REPLY", "NEGATIVE_REPLY", "FOLLOW_UP_DUE",
+        "HUMAN_HANDOFF", "CLOSED"
+      ]
+    },
+    "event_at": {"type": "string", "format": "date-time", "description": "When the underlying Gmail-side fact was actually observed -- used for newer-wins ordering, never the import time"},
+    "gmail_message_id": {"type": ["string", "null"]},
+    "gmail_thread_id": {"type": ["string", "null"]},
+    "reason": {"type": ["string", "null"], "description": "Required in practice for a SUPPRESSED event (e.g. BOUNCE, NEGATIVE_REPLY, UNSUBSCRIBE) -- see config/outreach.yaml: suppression_reasons"},
+    "note": {"type": ["string", "null"]},
+    "source": {"type": "string", "description": "e.g. 'chatgpt_gmail_reconciliation' -- never a claim of Lead Engine's own origin"}
+  }
+}

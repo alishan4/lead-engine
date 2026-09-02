@@ -1,0 +1,72 @@
+# V3.6 -- shared READY_TO_SEND handoff bridge configuration. Nothing here
+# changes FIT/GAP/QA/send-window logic (frozen); this only governs how
+# already-qualified, already-QA'd, already-planned leads are packaged for
+# an external (ChatGPT/Gmail-side) consumer, and how that consumer's result
+# events are read back in.
+
+# Which backend scripts/handoff_backend.py:build_backend() constructs.
+# "local" always works with zero external credentials. "google_sheets"
+# requires config below AND a real service-account file to actually
+# perform network I/O -- see docs/AUTOMATION.md "Google Sheets setup" for
+# the exact steps. Selecting google_sheets with no credentials file present
+# is a valid, safe configuration: every sync call fails closed with
+# SHARED_HANDOFF_AUTH_REQUIRED instead of raising or fabricating success.
+backend: local
+
+local_backend:
+  # Directory name under the active data root (_lib.DATA -- respects
+  # LEAD_ENGINE_DATA_DIR, so a sandboxed validation run correctly writes to
+  # its own throwaway copy instead of the real data/handoff/). All real
+  # prospect/contact/outreach data -- gitignored in full, exactly like
+  # data/outreach/. Never committed.
+  dir: "handoff"
+  email_ready_file: "email_ready.json"          # dict keyed by lead_id -- upsert, never append-only
+  contact_form_ready_file: "contact_form_ready.json"
+  sync_log_file: "sync_log.jsonl"                # append-only audit trail, one line per sync attempt
+  imported_events_log_file: "imported_events_log.jsonl"  # append-only, dedup ledger for result-event idempotency
+
+google_sheets:
+  # Never reuses Gmail OAuth credentials, never requests a broader scope
+  # than Sheets it needs (spreadsheets scope only, not full Drive). Path is
+  # a *local file location* -- the actual file must never be committed
+  # (already covered by .gitignore's `service-account*.json`/`credentials*.json`
+  # patterns). Left unset (None) until the user explicitly provisions one.
+  service_account_file: null    # e.g. "~/.config/lead-engine/sheets-service-account.json"
+  spreadsheet_id: null          # the private Sheet's ID, from its URL
+  email_ready_tab: "EMAIL_READY"
+  contact_form_ready_tab: "CONTACT_FORM_READY"
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+
+# Result-event vocabulary this system will import from
+# data/outreach/outreach_results.jsonl (local fallback) or the Sheet's
+# result columns -- see scripts/handoff_lib.py: EVENT_STATE_FIELD /
+# EVENT_TERMINAL_VALUE. Adding a new event type requires adding it here AND
+# to the two maps in handoff_lib.py (deliberately explicit, no wildcard).
+result_events:
+  - GMAIL_RECONCILED
+  - PRIOR_SENT_FOUND
+  - PRIOR_REPLY_FOUND
+  - PRIOR_BOUNCE_FOUND
+  - DUPLICATE_FOUND
+  - SUPPRESSED
+  - SEND_WINDOW_CONFIRMED
+  - SEND_ATTEMPTED
+  - GMAIL_SENT
+  - SEND_FAILED
+  - NO_BOUNCE_DETECTED
+  - DELIVERY_FAILED
+  - REPLIED
+  - POSITIVE_REPLY
+  - NEGATIVE_REPLY
+  - FOLLOW_UP_DUE
+  - HUMAN_HANDOFF
+  - CLOSED
+
+# Tracker CSV export (monthly-workbook-compatible, reporting mirror only --
+# never a transactional path). Written under local_backend.dir alongside
+# the queue files, same gitignore coverage.
+tracker:
+  leads_master_file: "leads_master.csv"
+  outreach_log_file: "outreach_log.csv"
+  follow_up_queue_file: "follow_up_queue.csv"
+  daily_pipeline_file: "daily_pipeline.csv"

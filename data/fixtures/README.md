@@ -19,6 +19,13 @@ writing a new script that reads/writes one of these files.
   (the ChatGPT/Gmail-side handoff contract).
 - `example_daily_run_summary.json` — one `data/runtime/daily_runs/*.json`
   run summary.
+- `example_handoff_row.json` — one V3.6 shared-queue row
+  (`schemas/handoff_row.schema.json`), the flattened ChatGPT/Gmail-side view
+  of an EMAIL_READY lead.
+- `example_outreach_results.jsonl` — two V3.6 external result events
+  (`schemas/outreach_result_event.schema.json`) for the same example lead,
+  in the shape `scripts/import_outreach_results.py` reads from
+  `data/outreach/outreach_results.jsonl`.
 
 Real, committed schemas for all of these live in `schemas/`; these
 fixtures are illustrative examples, not the validation source of truth.

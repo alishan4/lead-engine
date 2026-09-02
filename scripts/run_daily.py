@@ -282,6 +282,49 @@ def main():
     # --- Step: READY_TO_SEND export for ChatGPT/Gmail-side reconciliation
     export_ok = run_script(["export_ready_to_send.py"], logfile, failures)
 
+    # --- Step: V3.6 shared handoff sync (before the run summary is
+    #     finalized, per the spec) -- import any external result events
+    #     first (so a lead already marked GMAIL_SENT/SUPPRESSED etc. is
+    #     correctly reflected before this run's export), then sync the two
+    #     shared queues. A total failure here (not just a per-row one,
+    #     which sync_handoff.py/import_outreach_results.py already isolate)
+    #     is caught here and never aborts the rest of run_daily.py -- the
+    #     acquisition run must still complete locally.
+    handoff_summary = {"handoff_sync_status": "NOT_RUN", "email_ready_rows": 0, "contact_form_ready_rows": 0,
+                        "row_failures": [], "import_events_applied": 0, "import_failures": []}
+    try:
+        import import_outreach_results
+        import_result = import_outreach_results.import_results(logfn=lambda m: log(m, logfile))
+        handoff_summary["import_events_applied"] = import_result["events_applied"]
+        handoff_summary["import_failures"] = import_result["import_failures"]
+        log(f"import_outreach_results: {import_result['events_applied']} applied, "
+            f"{import_result['events_skipped_duplicate']} duplicate, {import_result['events_skipped_stale']} stale", logfile)
+
+        import sync_handoff
+        sync_result = sync_handoff.sync(logfn=lambda m: log(m, logfile))
+        handoff_summary.update({
+            "handoff_sync_status": sync_result["handoff_sync_status"],
+            "email_ready_rows": sync_result["email_ready_rows"],
+            "contact_form_ready_rows": sync_result["contact_form_ready_rows"],
+            "row_failures": sync_result["row_failures"],
+        })
+        if sync_result["handoff_sync_status"] != "SYNCED":
+            limitations.append(f"{sync_result['handoff_sync_status']}: {sync_result.get('remote_sync_error', '')} "
+                                "-- local shared queue is up to date and remains authoritative; remote sync will "
+                                "retry on the next run.")
+    except Exception as e:
+        handoff_summary["handoff_sync_status"] = "HANDOFF_SYNC_FAILED"
+        log(f"HANDOFF_SYNC_FAILED -- unexpected error, local READY_TO_SEND records are NOT lost: {e}", logfile)
+        limitations.append(f"HANDOFF_SYNC_FAILED: {e}")
+
+    # --- Step: monthly-tracker CSV exports (reporting mirror only) -------
+    try:
+        import export_tracker_csv
+        export_tracker_csv.export_all(logfn=lambda m: log(m, logfile))
+    except Exception as e:
+        log(f"tracker CSV export failed (non-fatal): {e}", logfile)
+        failures.append({"prospect_id": None, "stage": "export_tracker_csv.py", "reason": str(e)})
+
     # --- Step: reporting exports (dated runtime artifacts, gitignored) ---
     run_script(["report_pipeline.py"], logfile, failures)
     run_script(["triage_report.py"], logfile, failures)
@@ -349,6 +392,8 @@ def main():
         # acquisition_stats["rejected"], since that tally ran first).
         SUPERSEDED_BY_FINAL_TALLY = {"limitations", "qualified", "high_priority", "rejected", "needs_enrichment"}
         summary.update({k: v for k, v in acquisition_stats.items() if k not in SUPERSEDED_BY_FINAL_TALLY})
+
+    summary.update(handoff_summary)  # V3.6: handoff_sync_status/email_ready_rows/contact_form_ready_rows/row_failures/import_events_applied/import_failures
 
     out_name = f"DRY-RUN-{run_id}.json" if args.dry_run else f"{today_key()}.json"
     out_path = DAILY_RUNS_DIR / out_name

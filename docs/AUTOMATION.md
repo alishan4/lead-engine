@@ -154,6 +154,86 @@ window — enough to act on without redoing any SEO/intelligence analysis.
 It never contains credentials. Format reference:
 `data/fixtures/example_ready_to_send.jsonl`.
 
+## V3.6 shared handoff bridge
+
+`data/outreach/ready_to_send.jsonl` remains the local, always-available
+interface (V3.4, unchanged). V3.6 adds a **shared queue** on top of it so
+ChatGPT can consume a clean, flattened view without re-reading raw Lead
+Engine artifacts, and so Gmail-side result events can flow back in. This
+is purely additive — nothing about `READY_TO_SEND`, QA, or the local
+`.jsonl` interface changes.
+
+**Flow** (runs every `run_daily.py` invocation, right after
+`export_ready_to_send.py` and before the reporting exports, per
+`OPERATING-RULES.md` §1's V3.6 update):
+
+```
+export_ready_to_send.py (unchanged)
+  -> import_outreach_results.py   (apply any new external result events first)
+  -> sync_handoff.py               (build + push the two shared queues)
+  -> export_tracker_csv.py         (regenerate the monthly-workbook CSVs)
+```
+
+**Two queues, never mixed** (`scripts/handoff_lib.py`): a lead with a
+verified named/company email (`preferred_channel` `NAMED_EMAIL`/
+`COMPANY_EMAIL`) goes to **EMAIL_READY** — the only queue ChatGPT/Gmail may
+eventually act on. A lead whose only channel is a contact form
+(`CONTACT_FORM`) goes to **CONTACT_FORM_READY** — human/manual channel
+only; never treated as email-sendable by anything in this repository or
+implied for the ChatGPT side.
+
+**Idempotent, keyed by `lead_id`** (== `prospect_id`): re-running the sync
+updates the same row, never appends a duplicate. Fields split into two
+ownership groups — Lead-Engine-owned (business/wedge/asset/contact/email/
+timing/qualification, recomputed fresh every sync) and external-owned
+(`gmail_state`, `delivery_state`, `reply_state`, `follow_up_state`,
+`gmail_message_id`, `gmail_thread_id`, `suppression_reason` — set only by
+`scripts/import_outreach_results.py` applying a real event, and preserved
+by every Lead Engine sync no matter what). See
+`schemas/handoff_row.schema.json` and `scripts/handoff_lib.py:merge_row`/
+`apply_event`.
+
+**Local backend (default, zero credentials)**: `config/handoff.yaml:
+backend: local` — writes `data/handoff/email_ready.{json,csv}` and
+`data/handoff/contact_form_ready.{json,csv}` (gitignored, real data). This
+always works; nothing about the shared queue requires Google Sheets to be
+configured.
+
+**Google Sheets setup** (optional, `config/handoff.yaml: backend:
+google_sheets`):
+1. Create (or reuse) a Google Cloud project, enable the **Google Sheets
+   API only** (never Drive, never Gmail).
+2. Create a service account, download its JSON key to a path **outside
+   this repo** (or anywhere already covered by `.gitignore`'s
+   `credentials*.json`/`service-account*.json`/`token*.json` patterns —
+   never inside a location that could be accidentally `git add -A`'d).
+3. Create a private Google Sheet (or reuse one) with two tabs named to
+   match `config/handoff.yaml: google_sheets.email_ready_tab`/
+   `contact_form_ready_tab` (defaults: `EMAIL_READY`/`CONTACT_FORM_READY`),
+   plus a `RESULTS` tab for ChatGPT to write result events into.
+4. Share that Sheet with the service account's `client_email` as **Editor**
+   — never publish it with a public link.
+5. Set `config/handoff.yaml: google_sheets.service_account_file` (the JSON
+   key's path) and `spreadsheet_id` (from the Sheet's URL).
+6. `pip install google-api-python-client google-auth` (only needed once
+   this backend is actually selected — the local backend and every test
+   work with zero extra packages).
+
+Until steps 1–6 are done, selecting `google_sheets` is safe: every sync
+call fails closed with `SHARED_HANDOFF_AUTH_REQUIRED`, the local queue
+stays up to date and authoritative, and nothing is lost (see
+`scripts/handoff_backend.py: SharedHandoffAuthRequired`).
+
+**Result events flow back in** via `data/outreach/outreach_results.jsonl`
+(local fallback — `schemas/outreach_result_event.schema.json`) or, for the
+Sheets backend, its `RESULTS` tab. `scripts/import_outreach_results.py`
+applies each event idempotently — the exact same Gmail message/thread
+event is never double-applied, and a stale/out-of-order event can never
+regress a field a newer one already set (`scripts/handoff_lib.py:
+event_dedup_key`/`apply_event`). A `SUPPRESSED` event also registers in
+the existing V3.3 suppression registry so the rest of the pipeline
+respects it on the next run.
+
 ## ChatGPT / Gmail boundary
 
 Per `OPERATING-RULES.md` §1: everything after `READY_TO_SEND` — real
@@ -177,6 +257,16 @@ A human-readable reporting mirror only — it reports what Lead Engine and
 Gmail each separately recorded, and is never authoritative over either.
 See `OPERATING-RULES.md` §2 for the exact non-equivalences this implies
 (`READY_TO_SEND != GMAIL_SENT`, `NO_BOUNCE_DETECTED != DELIVERED`).
+
+V3.6 adds four CSVs (`scripts/export_tracker_csv.py`, regenerated every
+run, gitignored under `data/handoff/`) matching a monthly Excel workbook's
+expected import shape: `leads_master.csv` (one row per prospect ever
+discovered), `outreach_log.csv` (one row per shared-queue lead, both
+queues), `follow_up_queue.csv` (shared-queue rows currently
+`follow_up_state == FOLLOW_UP_DUE`), `daily_pipeline.csv` (one row per
+daily run summary). These are CSV exports for the workbook to import, never
+a direct `.xlsx` write — Excel remains a reporting mirror, never the
+transactional path.
 
 ## Failure recovery
 
@@ -203,6 +293,9 @@ scripts/run_daily.sh --deterministic-only     # pre-V3.5 behavior only, no Claud
 scripts/run_claude_acquisition.sh                          # auto-detect trigger_type via catchup.py, real run
 scripts/run_claude_acquisition.sh "" --max-prospects 2      # controlled validation run (real research, capped)
 python3 scripts/claude_preflight.py                        # standalone Claude-auth sanity check
+python3 scripts/sync_handoff.py                             # V3.6: rebuild + push the shared queue standalone
+python3 scripts/import_outreach_results.py                  # V3.6: apply new external result events standalone
+python3 scripts/export_tracker_csv.py                       # V3.6: regenerate the monthly-tracker CSVs standalone
 ```
 
 ## Timer status

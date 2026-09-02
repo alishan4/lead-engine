@@ -33,6 +33,32 @@ same session.
 **Lead Engine's automated responsibility ends at `READY_TO_SEND`.** It
 never sends a real email and never touches a real Gmail account.
 
+### V3.6 update — the shared handoff bridge
+
+`READY_TO_SEND`/`SEND_WINDOW_PLANNED` leads are additionally packaged into
+a **shared queue** (`scripts/sync_handoff.py`, `scripts/handoff_backend.py`)
+so ChatGPT/Gmail-side automation can consume them without re-reading raw
+Lead Engine artifacts. This does not move the `READY_TO_SEND` boundary —
+Lead Engine still never sends anything and never touches Gmail; the shared
+queue is a **read view for ChatGPT**, not a new capability for Lead Engine.
+The permanent flow:
+
+```
+Lead Engine -> READY_TO_SEND -> shared queue (EMAIL_READY / CONTACT_FORM_READY)
+  -> ChatGPT reads queue -> Gmail reconciliation -> real send/reply/bounce
+  -> result events written back to the shared queue
+  -> Lead Engine imports results (scripts/import_outreach_results.py)
+  -> monthly reporting updated (scripts/export_tracker_csv.py)
+```
+
+Backend is provider-neutral (`config/handoff.yaml: backend`): `local`
+(zero credentials, always available, `data/handoff/`) or `google_sheets`
+(a real, credential-gated adapter — see `docs/AUTOMATION.md` "Google Sheets
+setup"). Neither backend ever touches Gmail; the Sheets adapter uses its
+own separate service-account credential with Sheets-only scope, never
+Gmail OAuth. See `scripts/handoff_lib.py`'s `EXTERNAL_OWNED_FIELDS` for the
+mechanism that makes the next rule structural rather than just documented.
+
 ### CHATGPT owns (downstream of the handoff):
 - Real Gmail reconciliation (checking the actual mailbox before acting)
 - Prior-email / duplicate-thread detection against the real account
@@ -65,18 +91,33 @@ and requires a separate, explicitly authorized implementation step.
 |---|---|
 | **Lead Engine** (this repo's `data/`) | Research findings, qualification state, FIT/GAP scores, the selected wedge, dossier, staged asset, draft content, QA verdicts, planned send windows |
 | **Gmail** (the real account, owned by the user, operated via ChatGPT) | Whether an email was actually sent, delivered, bounced, replied to, or opened |
-| **Monthly tracker** | A human-readable reporting *mirror* of the above two — it is never authoritative over either |
+| **Shared queue** (V3.6, `data/handoff/` local / a private Google Sheet) | Handoff/control plane only — a synchronized VIEW of Lead Engine's and Gmail's own state, never a third independent source of truth. See below. |
+| **Monthly tracker** | A human-readable reporting *mirror* of the above — it is never authoritative over any of them |
 
 **Never allow `READY_TO_SEND == GMAIL_SENT`.** Reaching `READY_TO_SEND` in
 this repository means a draft cleared every deterministic gate this system
 can apply. It says nothing about whether a real email was ever sent —
-only Gmail (via ChatGPT's reconciliation) can say that.
+only Gmail (via ChatGPT's reconciliation) can say that. In the shared queue
+(`schemas/handoff_row.schema.json`) this is two separate columns,
+`lead_engine_state` and `gmail_state` — never one overloaded status — and
+`gmail_state` stays `null` until a real imported Gmail-side event sets it.
 
 **Never allow `NO_BOUNCE_DETECTED == DELIVERED`.** `NO_BOUNCE_DETECTED` in
 `scripts/delivery_reconciliation.py` means no bounce signal has been
 *observed* — it is the honest absence of negative evidence, not positive
 proof of delivery. Absent a real signal, a message correctly stays in
 `DELIVERY_CHECK` indefinitely; that is a valid terminal state, not a bug.
+Same non-equivalence in the shared queue's `delivery_state` column.
+
+**The shared queue can never override a verified Gmail reply/bounce
+event.** `scripts/handoff_lib.py`'s `EXTERNAL_OWNED_FIELDS`
+(`gmail_state`, `delivery_state`, `reply_state`, `follow_up_state`,
+`gmail_message_id`, `gmail_thread_id`, `suppression_reason`) are fields
+Lead Engine's own sync (`merge_row`) never writes after first creation —
+only `scripts/import_outreach_results.py`, applying a real external event
+(`apply_event`), can change them, and only if the incoming event is newer
+than whatever is already recorded for that field (never lets a stale
+re-import regress a field a newer event already set).
 
 ---
 
