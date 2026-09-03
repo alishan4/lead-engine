@@ -100,9 +100,9 @@ catchup_window:
 # most often, tier 2 (plumbing/family_law/estate_law/moving_relocation)
 # less often -- while every listed niche still appears every rotation cycle
 # (never fully excluded, per the explicit "do not reject a niche globally"
-# rule). See reports/V3.7-ACQUISITION-QUALITY-REPORT.md Sec.A for the
-# empirical analysis (niche tier, not review count/years-in-business, was
-# the dominant correlate of today's low FIT scores) that motivated this.
+# rule). See docs/LEAD-ENGINE.md for the empirical analysis (niche tier,
+# not review count/years-in-business, was the dominant correlate of low
+# FIT scores in the production run that motivated this).
 discovery_markets:
   niches: ["hvac", "roofing", "restoration", "foundation_repair", "plumbing", "family_law", "estate_law", "moving_relocation"]
   cities:

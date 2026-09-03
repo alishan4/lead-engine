@@ -456,11 +456,11 @@ def outreach_capacity_remaining(ctx):
 # V3.7: niche tier (config/niches.yaml -- the existing V3.1 FIT
 # niche_economics axis, not a new concept) sets how many "slots" a niche
 # gets in one pass of the interleaved rotation below. Empirically motivated:
-# 2026-09-02's two production passes found niche tier, not review count or
+# a real production run's outcomes found niche tier, not review count or
 # years-in-business, was the dominant correlate of low FIT (see
-# reports/V3.7-ACQUISITION-QUALITY-REPORT.md Sec.A) -- every tier-2 niche
-# candidate landed at FIT 28-44 regardless of review count/rating/years,
-# while the single tier-1 candidate scored highest (56). Every tier still
+# docs/LEAD-ENGINE.md) -- every tier-2 niche candidate scored far lower
+# regardless of review count/rating/years, while the single tier-1
+# candidate scored highest. Every tier still
 # gets at least 1 slot -- a niche is never fully excluded from the rotation.
 TIER_ROTATION_WEIGHT = {1: 3, 2: 2, 3: 1}
 

@@ -1,6 +1,6 @@
 # V3.1.1 buying/timing signal evidence rules. Every value here is a
 # configurable operating rule, not a universal truth -- revisit as real
-# outreach data accumulates (see reports/V3.1.1-BUYING-SIGNALS-REPORT.md).
+# outreach data accumulates.
 #
 # Read by scripts/signal_evidence.py. Nothing in score_leads.py/qualify_leads.py
 # hardcodes a source, confidence band, or freshness window -- it's all here.

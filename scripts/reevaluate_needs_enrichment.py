@@ -42,8 +42,7 @@ select_representative_position() -- NOT rescore_leads.py's best_position()
 would silently erase a genuine per-query Maps/organic opportunity whenever
 the same business also ranks strongly for an unrelated query. See that
 function's docstring for the real case (Example Restoration, 2026-09-02)
-that exposed this, and reports/V3.7.1-RANKING-GAP-SCORING-REVIEW.md for the
-full diagnosis.
+that exposed this, and docs/LEAD-ENGINE.md for the full diagnosis.
 
 Usage:
   python3 scripts/reevaluate_needs_enrichment.py --id <slug>

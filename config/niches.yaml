@@ -192,7 +192,7 @@ niches:
     high_value: true
     tier: 2  # V3.7: high ticket per job (especially long-distance/full-service), moderate outreach
              # saturation -- added to broaden acquisition beyond legal-services concentration
-             # (see reports/V3.7-ACQUISITION-QUALITY-REPORT.md). Not tier 1: demand is less
+             # (see docs/LEAD-ENGINE.md). Not tier 1: demand is less
              # uniformly emergency-driven than restoration/HVAC/roofing, so scored more
              # conservatively pending real evidence of buying-signal availability in this niche.
     money_keywords:

@@ -237,7 +237,7 @@ class ManualImportProviderMixin:
 class TestQueryLevelRegression(ManualImportProviderMixin, unittest.TestCase):
     """V3.8 regression, reproducing the real shape of a genuine V3.7.1
     production case (a business tracked under 3 distinct queries at
-    maps_position 6/4/2 -- see reports/V3.7.1-RANKING-GAP-SCORING-REVIEW.md)
+    maps_position 6/4/2 -- see docs/LEAD-ENGINE.md)
     with a synthetic business/domain. Every query must return its OWN real
     position -- never blended, never reduced to 'the business ranks #2'."""
 

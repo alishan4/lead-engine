@@ -22,7 +22,7 @@ commercially attractive client" -- a business is never QUALIFIED just
 because its GAP is bad; it must also show FIT (niche economics, maturity,
 buying intent, contactability, market attractiveness). See
 config/scoring.yaml: fit_thresholds/gap_thresholds and
-reports/V3.1-QUALIFICATION-REPORT.md for the full reasoning.
+docs/LEAD-ENGINE.md for the full reasoning.
 
 Usage:
   python3 scripts/qualify_leads.py
@@ -42,7 +42,7 @@ HIGH_PRIORITY_SIGNAL_FIELDS = (
 
 # Missing data in these two fields is what "could materially change the
 # decision" -- they're the two heaviest scoring weights and the ones a plain
-# WebSearch discovery pass usually can't fill (see reports/V1-COST-REVIEW.md).
+# WebSearch discovery pass usually can't fill.
 MATERIAL_ENRICHMENT_FIELDS = {"maps_position", "organic_position"}
 
 

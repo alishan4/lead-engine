@@ -73,7 +73,7 @@ def filter_candidates(candidates, known_keys):
     scripts/acquisition_worker.py's discovery_phase output) -- never
     silently discarded. Deliberately does NOT filter on review_count/
     rating/years_in_business: empirical analysis of 2026-09-02's real
-    outcomes (reports/V3.7-ACQUISITION-QUALITY-REPORT.md Sec.B) found niche
+    outcomes (see docs/LEAD-ENGINE.md) found niche
     tier, not those confirmed-but-often-null fields, was what actually
     correlated with low FIT -- a review-count/years threshold would have
     incorrectly screened out several candidates that scored fine, and

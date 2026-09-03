@@ -83,9 +83,9 @@ V3.6.1 safety rule:
   `commercial_value_signal` is `"low"` (previously only `"none"` was
   dropped) before spending three more expensive Claude calls on it. This
   does not add a review-count/years-in-business/rating threshold --
-  empirical analysis of 2026-09-02's real outcomes found niche tier, not
+  empirical analysis of a real production run found niche tier, not
   those fields, was what actually correlated with low FIT (see
-  `reports/V3.7-ACQUISITION-QUALITY-REPORT.md`).
+  `docs/LEAD-ENGINE.md`).
 - **Bounded timeout retry**: `scripts/acquisition_worker.py: claude_research`
   now retries a `ClaudeTimeout` exactly once (`config/acquisition.yaml:
   reliability.max_timeout_retries`) before propagating as a per-lead/

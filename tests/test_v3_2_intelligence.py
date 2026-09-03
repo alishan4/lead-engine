@@ -5,7 +5,7 @@ staging, and cache behavior. Pure functions and synthetic fixtures --
 Paths B/C/D (one-agent, two-agent, stop) are validated here with synthetic
 data exactly as the V3.2 brief itself specifies ("test", "synthetic
 fixture"), since the 4 real eligible leads all honestly resolved via the
-zero-agent path on their own real evidence (see reports/V3.2-INTELLIGENCE-REPORT.md).
+zero-agent path on their own real evidence.
 
 No claude-seo agent is invoked anywhere in this file. No Gmail action is
 referenced anywhere in the V3.2 modules under test.
