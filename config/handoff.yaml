@@ -22,6 +22,7 @@ local_backend:
   dir: "handoff"
   email_ready_file: "email_ready.json"          # dict keyed by lead_id -- upsert, never append-only
   contact_form_ready_file: "contact_form_ready.json"
+  candidates_file: "candidates.json"             # V3.8.1 -- dict keyed by lead_id, same upsert discipline
   sync_log_file: "sync_log.jsonl"                # append-only audit trail, one line per sync attempt
   imported_events_log_file: "imported_events_log.jsonl"  # append-only, dedup ledger for result-event idempotency
 
@@ -31,7 +32,7 @@ google_sheets:
   # a *local file location* -- the actual file must never be committed
   # (already covered by .gitignore's `service-account*.json`/`credentials*.json`
   # patterns). Left unset (None) until the user explicitly provisions one.
-  service_account_file: null    # e.g. "~/.config/lead-engine/sheets-service-account.json"
+  service_account_file: null    # e.g. "~/.config/lead-engine/sheets-service-account.json" -- see config/handoff.example.yaml
   spreadsheet_id: null          # the private Sheet's ID, from its URL
   email_ready_tab: "EMAIL_READY"
   contact_form_ready_tab: "CONTACT_FORM_READY"
@@ -40,6 +41,13 @@ google_sheets:
   # to that literal when this key is absent) so a config saved before this
   # key existed keeps working unchanged.
   results_tab: "RESULTS"
+  # V3.8.1: the ADDITIONAL discovery-only-mode handoff surface -- a
+  # lightweight, factual-only candidate row per business (never FIT/GAP/
+  # ranking/wedge/contact-identity data). Defaults to "CANDIDATES"
+  # (GoogleSheetsBackend.export_candidates() falls back to that literal
+  # when this key is absent), same backward-compatible-default pattern as
+  # results_tab above. Never touches EMAIL_READY/CONTACT_FORM_READY/RESULTS.
+  candidates_tab: "CANDIDATES"
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 
 # Result-event vocabulary this system will import from

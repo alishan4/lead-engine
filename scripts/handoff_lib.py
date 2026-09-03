@@ -12,6 +12,8 @@ imported Gmail-side event) may change them. This is what makes
 READY_TO_SEND != GMAIL_SENT and NO_BOUNCE_DETECTED != DELIVERED structural
 in the shared queue, not just a documentation promise.
 """
+import json
+
 from _lib import check_freshness, now_iso
 from outreach_lib import normalize_domain, is_suppressed, account_lock_check
 
@@ -271,6 +273,63 @@ def event_dedup_key(event):
     if mid or tid:
         return (lead_id, event_type, mid, tid)
     return (lead_id, event_type, event.get("event_at"))
+
+
+# ---------------------------------------------------------------------------
+# V3.8.1 -- CANDIDATES tab. An ADDITIONAL handoff surface, alongside (never
+# replacing) EMAIL_READY/CONTACT_FORM_READY/RESULTS above. Every field here
+# is Lead-Engine-owned and deterministic (schemas/candidate_record.schema.json)
+# -- there is currently no ChatGPT-side write-back concept for a candidate
+# row (unlike EXTERNAL_OWNED_FIELDS above), so a re-sync safely overwrites
+# every field except created_at, which is always preserved from the first
+# sync -- this is what keeps a rediscovered/re-synced candidate from ever
+# duplicating its row (idempotent upsert-by-lead_id, same mechanism
+# GoogleSheetsBackend._upsert_tab / LocalFileBackend already use for the
+# two queues above).
+# ---------------------------------------------------------------------------
+CANDIDATE_COLUMNS = (
+    "lead_id", "business_name", "domain", "website", "city", "state", "country",
+    "niche", "phone", "profile_url", "discovery_source", "discovered_at",
+    "verification_status", "basic_business_facts",
+    "created_at", "updated_at",
+)
+
+
+def candidate_row_from_record(candidate_record, now=None):
+    """Pure: schemas/candidate_record.schema.json's dict -> one flat
+    CANDIDATE_COLUMNS row ready for a Sheet/local-file upsert.
+    `basic_business_facts` (a nested dict) is JSON-stringified since every
+    handoff row (Sheets or CSV) is a flat key/value structure -- the
+    original structured dict is never lost, just serialized for transport,
+    exactly like `env`/other nested blobs elsewhere in this pipeline."""
+    now = now or now_iso()
+    row = {c: candidate_record.get(c) for c in CANDIDATE_COLUMNS if c not in ("created_at", "updated_at", "basic_business_facts")}
+    row["basic_business_facts"] = json.dumps(candidate_record.get("basic_business_facts") or {}, ensure_ascii=False)
+    row["created_at"] = now
+    row["updated_at"] = now
+    return row
+
+
+def merge_candidate_row(existing_row, fresh_row, now=None):
+    """
+    Pure: the idempotent-export merge for one CANDIDATES row. Every field
+    is Lead-Engine-owned and safe to recompute fresh on every sync (no
+    EXTERNAL_OWNED_FIELDS concept exists for a candidate today) -- the only
+    thing preserved from `existing_row` is `created_at`, so re-syncing the
+    same lead_id (a rediscovery, or simply a later run re-reading the same
+    CANDIDATE_VERIFIED prospect) always updates the SAME row in place,
+    never appends a duplicate.
+    """
+    now = now or now_iso()
+    if existing_row is None:
+        row = dict(fresh_row)
+        row["created_at"] = now
+        row["updated_at"] = now
+        return row
+    row = dict(fresh_row)
+    row["created_at"] = existing_row.get("created_at") or now
+    row["updated_at"] = now
+    return row
 
 
 def apply_event(row, event, now=None):

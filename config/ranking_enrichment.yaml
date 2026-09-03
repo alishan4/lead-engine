@@ -1,0 +1,59 @@
+# V3.8 -- Automated Ranking Enrichment. Governs how NEEDS_ENRICHMENT leads
+# are drained via ranking-evidence enrichment BEFORE any fresh Claude
+# acquisition capacity is spent (see scripts/rank_enrichment.py,
+# scripts/ranking_providers.py, OPERATING-RULES.md's V3.8 update).
+#
+# Nothing here touches config/scoring.yaml's fit_thresholds/gap_thresholds/
+# thresholds -- those stay frozen. This file only bounds HOW MUCH ranking
+# enrichment work happens per run and HOW OLD evidence may be to count.
+# Fully deterministic, zero-Claude, zero-cost by construction in this
+# environment (see "providers" below) -- see the V3.8 report for why.
+
+# Ceiling on leads the daily orchestrator attempts to enrich per run --
+# never all of NEEDS_ENRICHMENT at once, so one run's enrichment work stays
+# fast and cheap regardless of how large the backlog grows.
+max_enrichment_leads_per_run: 8
+
+# Money-query budget per lead (2-4 typical, per the V3.8 spec). Never
+# generates dozens of keywords -- reuses config/niches.yaml's existing
+# money_keywords list, never invents a new phrase.
+max_queries_per_lead: 4
+min_queries_per_lead: 2
+
+# Global cost circuit breaker: total provider lookups (across every lead and
+# query this cycle) is capped independently of the per-lead query cap above,
+# so a large backlog of high-query-count leads still can't blow the cycle's
+# total cost/time budget.
+max_provider_requests_per_run: 24
+
+# How old an observation may be and still count as evidence backing a fresh
+# qualification decision. Intentionally duplicates config/limits.yaml's
+# ranking_freshness_days (kept in sync -- see
+# tests/test_v3_8_ranking_enrichment.py: test_freshness_days_matches_limits_yaml)
+# rather than importing it, so this subsystem's config stays self-contained
+# and readable on its own.
+freshness_days: 14
+
+# Where a human/analyst drops a small, already-vetted ranking-evidence file
+# (the same shape schemas/ranking_evidence_observation.schema.json /
+# scripts/import_ranking_observation.py --file already accepts) for the
+# orchestrator to notice and ingest automatically. Filename convention:
+# <inbox_dir>/<market_id>.json. The orchestrator only ever READS this
+# directory -- nothing in this pipeline ever fetches live ranking data from
+# any paid or scraped source; that would require an explicit, separately
+# authorized future phase (see OPERATING-RULES.md's V3.8 update), exactly
+# like scripts/send_executor.py's real-send path.
+inbox_dir: "data/rankings/inbox"
+
+# Provider chain, tried in order for a given query until one returns a
+# genuine hit (ALREADY_SATISFIED or OBSERVATION) -- never blended, first
+# real result wins. See scripts/ranking_providers.py for the classes.
+providers:
+  - manual_import   # ManualImportProvider: already-imported data/rankings/<market_id>.csv rows
+  - semrush_file     # SemrushFileProvider: a pre-vetted observations file dropped in inbox_dir
+  # external_api is deliberately NOT enabled -- ExternalRankProvider in
+  # scripts/ranking_providers.py is an unimplemented interface: no
+  # credential-backed live rank-tracking API (DataForSEO/SerpApi/ValueSERP/
+  # similar) is configured in this environment, and embedding one is out of
+  # scope for V3.8. Every query this chain can't resolve fails closed to
+  # RANKING_SOURCE_REQUIRED -- never a guessed/estimated ranking.

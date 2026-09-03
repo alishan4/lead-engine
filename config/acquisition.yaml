@@ -3,6 +3,31 @@
 # or specialist-call caps (config/limits.yaml) -- those stay frozen and are
 # read unchanged by the existing V3.1/V3.2 scripts this worker calls.
 
+# V3.8.1 -- which production flow scripts/run_daily.py runs.
+#   discovery_only (DEFAULT, required for the scheduled timer): discover ->
+#     cheap deterministic verification -> persist -> sync CANDIDATES to
+#     Google Sheets -> STOP. Nothing below basic verification runs
+#     automatically -- see config/discovery_only.yaml for every cap this
+#     mode obeys, and scripts/discovery_worker.py for the flow itself.
+#     Never calls acquisition_worker.py (this file's own
+#     max_worker_runtime_seconds/outreach_worthy_ceiling/fresh-discovery
+#     settings below are NOT read in this mode -- see
+#     config/discovery_only.yaml's own, smaller, independent set).
+#   full_pipeline: the complete, unchanged V3.5-V3.8 flow this file and
+#     acquisition_worker.py have always described (FIT/GAP, buying
+#     signals, contactability, ranking enrichment, specialist escalation,
+#     contact identity, outreach drafting, QA, send-window planning,
+#     READY_TO_SEND export) -- everything below this key is still exactly
+#     what it always was, and remains fully callable, just never the
+#     SCHEDULED timer's default. Run explicitly
+#     (`python3 scripts/run_daily.py` with this set, or
+#     `python3 scripts/acquisition_worker.py` directly) when you
+#     deliberately want the full research pipeline for a specific lead or
+#     backlog.
+# Fails closed (infrastructure_failure, non-zero exit) on any other value --
+# see scripts/run_daily.py: verify_workspace().
+production_mode: discovery_only
+
 # Outreach-worthy ceiling -- a CEILING, never a quota. The worker must stop
 # discovering/researching fresh candidates once today's QUALIFIED +
 # HIGH_PRIORITY count reaches this, but 1 excellent prospect on a slow day is

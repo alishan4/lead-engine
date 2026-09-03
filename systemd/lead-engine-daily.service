@@ -5,8 +5,8 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/user/Development/experiments/lead-engine
-ExecStart=/home/user/Development/experiments/lead-engine/scripts/run_daily.sh
+WorkingDirectory=/path/to/lead-engine
+ExecStart=/path/to/lead-engine/scripts/run_daily.sh
 # Belt-and-suspenders on top of the script's own flock: systemd will also
 # refuse to start a second instance of this unit while one is still running.
 # (This only protects against a second *systemd-triggered* start; the

@@ -47,8 +47,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from _lib import ROOT, PROSPECTS, MARKETS, LEADS, DATA, read_jsonl, load_json, write_json, now_iso
+from _lib import ROOT, PROSPECTS, MARKETS, LEADS, DATA, read_jsonl, load_json, load_yaml, write_json, now_iso
 import acquisition_worker
+import discovery_worker
+import sync_handoff
+import report_discovery_only
 
 SCHEDULE_TZ = ZoneInfo("Asia/Karachi")
 
@@ -61,8 +64,15 @@ REQUIRED_FILES = [
     ROOT / "OPERATING-RULES.md", ROOT / "CLAUDE.md",
     ROOT / "config" / "scoring.yaml", ROOT / "config" / "limits.yaml",
     ROOT / "config" / "outreach.yaml", ROOT / "config" / "niches.yaml",
+    ROOT / "config" / "acquisition.yaml", ROOT / "config" / "discovery_only.yaml",
     ROOT / "schemas" / "prospect.schema.json",
 ]
+
+# V3.8.1 -- config/acquisition.yaml: production_mode must be one of these
+# two. Any other value (typo, stale/removed value) fails closed via
+# verify_workspace() exactly like a missing required file or malformed
+# YAML -- infrastructure_failure, non-zero exit, zero work performed.
+VALID_PRODUCTION_MODES = {"discovery_only", "full_pipeline"}
 
 
 def log(msg, logfile=None):
@@ -81,10 +91,17 @@ def verify_workspace():
             problems.append(f"missing required file: {f.relative_to(ROOT)}")
     try:
         import yaml  # noqa: F401
-        from _lib import load_yaml
         load_yaml("scoring.yaml")
         load_yaml("limits.yaml")
         load_yaml("outreach.yaml")
+        acq_cfg = load_yaml("acquisition.yaml")
+        load_yaml("discovery_only.yaml")
+        mode = acq_cfg.get("production_mode", "discovery_only")
+        if mode not in VALID_PRODUCTION_MODES:
+            problems.append(
+                f"config/acquisition.yaml: production_mode={mode!r} is not one of {sorted(VALID_PRODUCTION_MODES)} "
+                "-- failing closed rather than guessing which pipeline to run."
+            )
     except Exception as e:
         problems.append(f"config failed to load: {e}")
     return (len(problems) == 0, problems)
@@ -192,6 +209,84 @@ def main():
     log("Workspace verified. OPERATING-RULES.md and CLAUDE.md present, config loads cleanly.", logfile)
     log("Permanent operating rules loaded (existence + parse check) before any pipeline stage ran.", logfile)
 
+    # V3.8.1 -- production_mode routing. discovery_only is the DEFAULT
+    # scheduled path; full_pipeline is the complete, unchanged V3.5-V3.8
+    # flow, still fully callable but never the timer's default. Already
+    # validated by verify_workspace() above, so this .get() with its
+    # default is a formality, not a silent guess.
+    acq_cfg = load_yaml("acquisition.yaml")
+    production_mode = acq_cfg.get("production_mode", "discovery_only")
+    log(f"production_mode={production_mode}", logfile)
+
+    if production_mode == "full_pipeline":
+        return run_full_pipeline(args, run_id, started_at, logfile, failures, limitations, today_key)
+    return run_discovery_only(args, run_id, started_at, logfile, today_key)
+
+
+def run_discovery_only(args, run_id, started_at, logfile, today_key):
+    """
+    V3.8.1 -- the DEFAULT scheduled flow (config/acquisition.yaml:
+    production_mode: discovery_only). See scripts/discovery_worker.py for
+    the full cost-governed discover -> deterministic-verify cycle this
+    calls. Nothing below basic verification runs here: no qualify_leads,
+    no deterministic intelligence scan, no dossier/asset, no contact
+    identity, no draft/QA/send-window, no export_ready_to_send, no ranking
+    enrichment, no SEO specialist agent, no Gmail access. This is a
+    ROUTING decision, not a deletion -- see run_full_pipeline() below
+    (config/acquisition.yaml: production_mode: full_pipeline) for the
+    complete, unchanged flow that still runs every one of those stages
+    when explicitly selected.
+    """
+    log("Starting V3.8.1 discovery-only worker...", logfile)
+    discovery_stats = discovery_worker.run(trigger_type=args.trigger_type, log=lambda msg: log(msg, logfile))
+    log(f"Discovery-only worker finished: auth_status={discovery_stats.get('claude_auth_status')}, "
+        f"run_already_active={discovery_stats.get('run_already_active')}, "
+        f"discovery_run_completed={discovery_stats.get('discovery_run_completed')}, "
+        f"worker_timeout={discovery_stats.get('worker_timeout')}, "
+        f"budget_status={discovery_stats.get('budget_status')}", logfile)
+
+    # --- Step: sync CANDIDATES to the configured handoff backend ---------
+    candidates_sync_result = {"candidates_sync_status": "NOT_RUN", "candidates_rows": 0, "candidate_row_failures": []}
+    try:
+        candidates_sync_result = sync_handoff.sync_candidates(logfn=lambda m: log(m, logfile))
+    except Exception as e:
+        candidates_sync_result["candidates_sync_status"] = "HANDOFF_SYNC_FAILED"
+        candidates_sync_result["remote_sync_error"] = str(e)[:400]
+        log(f"HANDOFF_SYNC_FAILED (CANDIDATES) -- unexpected error, local candidate records are NOT lost: {e}", logfile)
+
+    # --- Step: simplified discovery-only report ---------------------------
+    discovery_stats["trigger_type"] = args.trigger_type
+    report_path = report_discovery_only.write_report(discovery_stats, candidates_sync_result)
+    log(f"Wrote {report_path}", logfile)
+
+    summary = {
+        "run_id": run_id, "trigger_type": args.trigger_type, "started_at": started_at,
+        "completed_at": now_iso(), "dry_run": args.dry_run, "infrastructure_failure": False,
+        "production_mode": "discovery_only",
+        # scripts/catchup.py's determine_run() checks this exact field name
+        # (unchanged) to decide same-day catch-up eligibility -- aliased
+        # here from discovery_run_completed so that check keeps working
+        # without needing to know about the new, more honestly-named field.
+        "acquisition_run_completed": discovery_stats.get("discovery_run_completed", False),
+    }
+    summary.update(discovery_stats)
+    summary.update(candidates_sync_result)
+
+    out_name = f"DRY-RUN-{run_id}.json" if args.dry_run else f"{today_key()}.json"
+    out_path = DAILY_RUNS_DIR / out_name
+    write_json(out_path, summary)
+    log(f"Run summary written to {out_path}", logfile)
+    log(f"=== Lead Engine daily run {run_id} complete (discovery_only) ===", logfile)
+    return 0
+
+
+def run_full_pipeline(args, run_id, started_at, logfile, failures, limitations, today_key):
+    """
+    V3.5-V3.8, completely unchanged -- the full research pipeline
+    (config/acquisition.yaml: production_mode: full_pipeline). No longer
+    the scheduled timer's default as of V3.8.1, but every stage below
+    remains fully callable by explicitly setting that config value.
+    """
     before = artifact_snapshot()
     prospects_before = read_jsonl(PROSPECTS / "discovered.jsonl")
 
@@ -381,6 +476,17 @@ def main():
         "per_lead_failures": [],
         "worker_timeout": False,
         "run_already_active": False,
+        # --- V3.8 fields (see OPERATING-RULES.md's V3.8 update / rank_enrichment.py) ---
+        "ranking_backlog_before": 0,
+        "ranking_leads_attempted": 0,
+        "ranking_queries_attempted": 0,
+        "ranking_observations_imported": 0,
+        "ranking_provider_failures": 0,
+        "ranking_backlog_after": 0,
+        "qualified_after_ranking": 0,
+        "still_needs_enrichment": 0,
+        "ranking_cost_estimate": 0.0,
+        "ranking_failures": [],
     }
     if acquisition_stats:
         # Exclude keys this block above already computed AFTER the full

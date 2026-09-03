@@ -1,406 +1,378 @@
-# Lead Engine (V2 + V3.1 qualification layer)
+# Lead Engine
 
-Cost-optimized local SEO lead intelligence engine. Finds commercially valuable
-local-service businesses (roofing, HVAC, restoration, plumbing, dentistry,
-family law, etc.), verifies their identity, scores them with cheap rules
-before any AI is involved, fills in missing ranking data cheaply when that's
-the only thing blocking qualification, runs a capped, targeted claude-seo
-audit only on qualified leads, verifies a real contact before drafting, and
-stops the moment a lead is weak, dominant, unverifiable, stale, or
-low-confidence. Produces one evidence-backed dossier and one QA'd draft
-outreach email per approved lead, plus a local (never sent) Gmail-draft
-export.
+Cost-bounded, discovery-first B2B lead acquisition engine for Claude Code.
 
-**V2 does not send email, does not integrate Gmail sending, and never runs
-the full claude-seo specialist roster on a lead.** It stops at `QA_PASS`.
+Lead Engine finds independently-owned local-service businesses (roofing,
+HVAC, restoration, plumbing, moving, family law, and similar niches) that
+plausibly depend on Google Search/Maps for new customers, verifies them
+with cheap deterministic checks, and hands off a clean list of candidates
+for a human (optionally assisted by a separate LLM session) to qualify,
+research, and contact. It does not send email, does not touch Gmail, and
+does not run deep autonomous research by default.
 
-## Pipeline
+## Why it exists
 
-```
-DISCOVERED → BUSINESS_VERIFIED → INITIAL_SCORE
-                                       ↓
-                    ┌── REJECTED (hard rule / low score / bad identity)
-                    ├── NEEDS_ENRICHMENT → [import ranking data] → RESCORED ──┐
-                    └── MANUAL_REVIEW (55-69, no material data missing)      │
-                    └── QUALIFIED ←───────────────────────────────────────────┘
-                            ↓
-                       QUICK_AUDIT → (REJECTED | OPPORTUNITY_IDENTIFIED)
-                            ↓
-                      DOSSIER_READY → (REVERIFY_REQUIRED if stale)
-                            ↓
-                   CONTACT_VERIFICATION → CONTACT_UNVERIFIED (stop)
-                            ↓
-                     CONTACT_VERIFIED → EMAIL_DRAFT_READY → QA_PASS
-```
+Early experiments with this project ran a much deeper, fully autonomous
+pipeline: discovery, business verification, commercial-fit scoring,
+Google-opportunity scoring, buying-signal research, specialist SEO
+analysis, contact-identity research, and outreach drafting, all chained
+together and triggered on a schedule. It worked, but it revealed a real
+problem — multi-stage LLM research on a schedule can become surprisingly
+expensive very quickly, with cost that scales in ways that are easy to
+underestimate until you're looking at the bill.
 
-Every REJECTED / MANUAL_REVIEW / CONTACT_UNVERIFIED / REVERIFY_REQUIRED exit
-is a real stop, visible in `scripts/triage_report.py`. Nothing downstream of
-a stop runs for that lead until a human (or a cheap enrichment/re-check step)
-resolves it.
+The production path was redesigned around a different principle:
 
-## V3.1: which businesses reach expensive analysis
+> **Claude discovers. Claude does not analyze.**
 
-V3.1 is layered on top of V2, active only via `qualify_leads.py --v3` (the
-default, no-flag path is still pure V2, byte-for-byte unchanged). It answers
-a different question than V2's single blended score: not "does this
-business have an SEO problem" but **"is this a commercially attractive
-business, AND does it have a defensible Google/local opportunity, AND can
-we actually reach someone there?"** A business with terrible SEO does not
-qualify merely because its SEO is terrible.
+Lead Engine now separates **candidate discovery** (a single bounded Claude
+call per market, plus fully deterministic verification) from
+**qualification, sales intelligence, and outreach** (research-heavy work
+that a human — optionally working with a separate LLM session — takes on
+deliberately, one candidate at a time, once the cost of doing so is a
+choice rather than something scheduled software does automatically).
+
+The system is designed around cost limits, resumability, auditability,
+failure isolation, and explicit capability boundaries — not around
+maximizing how much a single scheduled run can autonomously accomplish.
+
+## Architecture
+
+The default scheduled path is deliberately short:
 
 ```
-DISCOVERED → BUSINESS_VERIFIED → [franchise/corporate check]
-     → COMMERCIAL_FIT_ASSESSED (partial) → BUYING_SIGNALS_ASSESSED
-     → CONTACTABILITY_CHECK → GOOGLE_GAP_ASSESSED → FIT_SCORED (final)
-     → GAP_SCORED → REJECTED | NEEDS_ENRICHMENT | MANUAL_REVIEW
-                   | QUALIFIED | HIGH_PRIORITY
+systemd timer
+      |
+      v
+discovery_worker
+      |
+      +--> Claude discovery (bounded: capped calls, capped $ budget,
+      |     capped runtime, capped market cells)
+      |
+      v
+deterministic verification (zero additional Claude calls)
+      |
+      v
+candidate persistence (local JSONL, idempotent)
+      |
+      v
+CANDIDATES handoff (Google Sheets, optional)
+      |
+      v
+STOP
 ```
 
-Franchise stop states: `FRANCHISE_REVIEW_REQUIRED` (uncertain — human call),
-`CORPORATE_MARKETING_LOCK` (confirmed the location can't buy its own local
-SEO), `LEAD_GEN_NETWORK` (it's a directory/aggregator, not a real single
-business). None of these fire from a brand-name match alone — see
-`config/franchise_blocklist.yaml`'s header comment.
+Everything after "STOP" — FIT/GAP scoring, ranking enrichment, SEO
+intelligence, contact verification, outreach drafting, QA, send-window
+planning — is real, tested, and still present in this repository. It is
+simply **not** invoked by the default scheduled path. These modules remain
+available as an explicit, manually-invoked `full_pipeline` mode for anyone
+who deliberately wants to spend the extra research budget on a specific
+lead or backlog.
 
-**FIT** (0-100: niche economics + business maturity + buying intent +
-contactability + market attractiveness) measures commercial attractiveness
-and has no term derived from SEO/website quality at all. **GAP** (0-100:
-Maps/GBP + organic visibility + service architecture + review gap +
-technical + competitor gap) measures the Google/local opportunity, fully
-deterministically, with the same confirmed/potential/completeness
-discipline as V2 — unknown rankings are never scored as poor rankings.
-`QUALIFIED` requires both FIT ≥ 40 and GAP ≥ 40; `HIGH_PRIORITY` additionally
-requires FIT ≥ 65, GAP ≥ 50, a real contact path, a confirmed buying/timing
-signal, and an evidence-backed `why_now`/`why_likely_buyer` — GAP size alone
-never promotes a lead. Full reasoning and thresholds:
-`reports/V3.1-QUALIFICATION-REPORT.md`.
+## Key principles
 
-V3.1 never calls a claude-seo agent — every step here is either pure
-deterministic Python or a bounded, cheap research prompt (franchise
-ambiguity, buying signals, the contactability pre-check — distinct from,
-and cheaper than, `verify_contact.py`'s later full verification).
+- **Discovery-first** — the scheduled path's only job is finding and
+  cheaply verifying candidates, never analyzing them.
+- **Fail closed** — an auth failure, a budget exhaustion, or a runtime
+  deadline stops the run cleanly rather than guessing past it.
+- **Deterministic where possible** — verification, deduplication,
+  candidate-record construction, and Sheet serialization are all plain
+  Python; Claude is used only where genuine judgment/research is required.
+- **Cost bounded** — every Claude call is governed by an explicit daily
+  dollar budget, a call cap, and a runtime ceiling, checked *before* the
+  call is made, not after.
+- **No invented evidence** — a missing fact stays missing (`null`/
+  `UNKNOWN`); nothing is guessed to fill a gap, including rankings,
+  contacts, or costs.
+- **Idempotent persistence** — rediscovering the same business never
+  creates a duplicate record or a duplicate handoff row.
+- **Failure isolation** — one candidate's or one market's failure never
+  blocks the rest of a run.
+- **Auditable state** — every prospect has an explicit status; every run
+  produces a summary; every Claude cost attempt (success or failure) is
+  recorded in a durable, append-only ledger.
+- **Explicit capability boundaries** — the scheduled worker's Claude
+  subprocess is launched with a restricted tool profile that has no
+  capability to send email, access Gmail, or submit a web form, regardless
+  of what any prompt asks for.
 
-### Running V3.1 (per lead, from `lead-engine/`)
+## Cost controls
 
-```bash
-python3 scripts/verify_business.py --id <slug> --save verification.json   # unchanged V2 step
-python3 scripts/check_franchise.py --id <slug>                            # free unless a blocklist match escalates it
-python3 scripts/assess_commercial_fit.py --id <slug>                      # partial pass -> COMMERCIAL_FIT_ASSESSED
-python3 scripts/assess_buying_signals.py --id <slug> --print-prompt       # then --save signals.json
-python3 scripts/check_contactability.py --id <slug> --print-prompt        # then --save contactability.json
-python3 scripts/assess_google_gap.py --id <slug>                          # fully deterministic -> GOOGLE_GAP_ASSESSED
-python3 scripts/assess_commercial_fit.py --id <slug>                      # final pass -> FIT_SCORED
-python3 scripts/qualify_leads.py --v3                                     # routes every FIT_SCORED lead
-```
+Every Claude call the default scheduled path makes is governed by config
+in `config/discovery_only.yaml`:
 
-A `QUALIFIED`/`HIGH_PRIORITY` result then continues into V2's unchanged
-`route_agents.py` → quick audit → `build_dossier.py` → `verify_contact.py`
-→ `generate_email.py` → `qa_email.py` flow exactly as before.
+| Setting | What it bounds |
+|---|---|
+| `daily_claude_budget_usd` | A hard dollar ceiling per calendar day, shared across every invocation that day (scheduled run, same-day catch-up, manual retry) via a durable, date-keyed ledger. |
+| `max_claude_calls_per_run` | An independent circuit breaker on the number of Claude call *attempts* in one run, enforced even when dollar cost can't be observed. |
+| `max_budget_usd_per_call` | The per-call `--max-budget-usd` circuit breaker passed straight to the Claude CLI. |
+| `max_worker_runtime_seconds` | The wall-clock ceiling for the whole discovery cycle. |
+| `min_seconds_to_start_claude_call` | The minimum runtime that must remain before a *new* Claude call is even started. |
 
-## What's new in V2 (see `reports/V2-COST-REVIEW.md` for the full writeup)
+What "attempt-based, not success-based" cost accounting means in practice:
 
-V1 proved the cost model but exposed one bottleneck: **good leads stalled at
-MANUAL_REVIEW purely because Maps/organic ranking data was missing** — not
-because the lead was actually weak. V2 fixes this without weakening any
-threshold or requiring a paid API:
+- A call counts against the call cap the moment it is **attempted**, not
+  only when it succeeds — a failed call is never refunded.
+- A failed call can still be billable (a call that hits its own per-call
+  budget mid-research still costs real money) — when the failure's own
+  output exposes a real, observed cost, that cost is recorded in the
+  daily ledger exactly like a successful call's.
+- When a failure exposes **no** recoverable cost, the ledger honestly
+  marks that day's accounting **incomplete** rather than assuming $0 —
+  the call cap becomes the enforceable backstop in that state, and the
+  remaining-budget figure is reported as unknown rather than a false
+  precise number.
+- Every Claude subprocess's own timeout is clamped to whatever worker
+  runtime actually remains — an in-flight call can never itself blow past
+  the worker deadline, and a call that is killed by the runtime deadline
+  is recorded, never retried, and stops the run cleanly (no replacement
+  call, no different market cell).
 
-1. **Business verification** (`verify_business.py`) runs before scoring, to
-   catch name collisions (e.g. multiple businesses named "Regal
-   Restoration") before their mismatched evidence gets scored as one company.
-2. **Data completeness is now tracked explicitly.** Every score has a
-   `confirmed_score` (known fields only — missing data is worth zero points,
-   never a penalty), a `potential_score` (best case if missing fields turned
-   out favorable), and a `data_completeness` percentage. `score_leads.py`
-   also fixes a real V1 bug where a `null` `service_page_count` was silently
-   treated as `0` (a confirmed weakness) instead of "unmeasured".
-3. **`NEEDS_ENRICHMENT`**: if `confirmed_score` misses the qualified bar but
-   `potential_score` clears it, and the gap is a material field
-   (`maps_position`/`organic_position`), the lead routes to cheap enrichment
-   instead of MANUAL_REVIEW or REJECTED — still zero AI calls.
-4. **A file-based ranking import** (`import_rankings.py`) normalizes a
-   Semrush export, a manual CSV, or a JSON snapshot into one schema, no paid
-   API required. `rescore_leads.py` then deterministically re-scores using
-   that data — still zero AI calls.
-5. **Every finding now carries structured evidence** (`evidence_items[]`:
-   statement + source + timestamp + type) instead of a free-text string, and
-   `check_freshness.py` blocks outreach built on stale evidence
-   (`finding_freshness_days` / `ranking_freshness_days`).
-6. **Contact verification is a hard gate.** No email is ever drafted for a
-   guessed address — `verify_contact.py` and `qa_email.py` both enforce this
-   in code, not just in the prompt.
-7. **A local, never-sent Gmail-draft export** (`export_gmail_drafts.py`)
-   for QA-PASS, contact-verified leads only. `send_status` is always
-   `"DRAFT_ONLY"` — nothing in this repo ever calls the Gmail API.
+This software cannot mathematically guarantee an exact dollar figure never
+gets exceeded (a live API call's true cost is only known after the fact,
+and a genuinely unobservable failure means the ledger's own accounting is
+honestly incomplete for that day) — what it guarantees is that every
+governor is checked before spending, every attempt is counted whether it
+succeeds or fails, and uncertainty is reported as uncertainty rather than
+papered over.
 
-## Why this is cheap (V1 controls, all preserved)
+## Production modes
 
-1. **Rule-based scoring runs first**, entirely in Python, zero network/AI
-   calls. Hard rejects and low scores never reach an AI call.
-2. **Quick audit is capped at 3 specialists** out of the ~18 in claude-seo
-   (`config/limits.yaml: max_quick_agents`, `config/routing.yaml`).
-3. **Market intelligence is cached per niche+city** (`data/markets/`) and
-   reused across every lead in that market.
-4. **Dossiers are cached by content hash** (`cache_days`, default 14).
-5. **A confidence gate blocks weak outreach**: opportunity confidence below
-   `min_opportunity_confidence` (0.75) rejects before a dossier is built.
-6. *(new)* **Enrichment is file-based, not a live paid API call** — ranking
-   data comes from a CSV/JSON you already have, imported once per market and
-   reused across every lead in it.
+`config/acquisition.yaml: production_mode` selects the flow the scheduled
+worker runs:
 
-## Division of labor: Python vs. Claude
+- **`discovery_only`** (default) — the flow described above. This is the
+  only mode the scheduled timer should ever run.
+- **`full_pipeline`** — the complete, legacy research pipeline (business
+  verification, FIT/GAP scoring, buying-signal research, ranking
+  enrichment, specialist SEO analysis, contact-identity research, outreach
+  drafting, QA, send-window planning). Fully functional and tested, but an
+  explicit, manual/advanced invocation only — never the scheduled default.
 
-The scripts in `scripts/` are deliberately dumb — they do arithmetic, file
-I/O, caching, routing, and threshold decisions, and they never call an LLM
-API directly. The reasoning steps (business verification, quick audit,
-opportunity selection, contact verification, email writing, email QA) are
-prompts in `prompts/`, meant to be run **by Claude** (this session, or a
-`claude-seo:*` subagent via the `Agent` tool) with the relevant script's
-`--print-prompt` output as input. The corresponding `--save` flag then
-validates, applies hard guardrails (e.g. "a guessed email can never be
-verified", "an unsupported claim can never PASS QA"), and persists whatever
-structured JSON Claude returns.
+An invalid `production_mode` value fails the run closed (non-zero exit,
+no work performed) rather than guessing which pipeline to run.
 
-## Directory map
+## Candidate schema
+
+Discovery-only mode's output is deliberately lightweight — factual
+discovery information only, never a score or a judgment call:
 
 ```
-config/      niches, scoring weights/thresholds, agent routing table, cost limits
-data/
-  prospects/ discovered.jsonl, qualified.jsonl, rejected.jsonl,
-             manual_review.jsonl, needs_enrichment.jsonl
-  markets/   <niche>-<city>-<state>/market.json — reusable competitor + ranking intel
-  rankings/  <market_id>.csv — normalized ranking snapshots (Semrush/manual/JSON)
-  leads/     <prospect-id>/{agent_plan_quick.json, quick_audit.json, opportunity.json,
-             dossier.json, contact.json, email.json}
-  outreach/  ready-for-draft.jsonl — DRAFT_ONLY export, never sent
-scripts/     orchestration CLIs (see below)
-schemas/     JSON Schemas for every artifact the pipeline produces
-prompts/     the 6 prompts Claude follows for the AI-driven steps
-reports/     report_pipeline.py / triage_report.py output + cost reviews
-tests/       unit tests (V1 scorer + V2 completeness/enrichment/verification/QA), no network, no AI
+lead_id
+business_name
+domain
+website
+city
+state
+country
+niche
+phone
+discovery_source
+discovered_at
+verification_status
+basic_business_facts
 ```
 
-## Running the pipeline
+Example (synthetic — not a real business):
 
-All commands run from `lead-engine/`.
-
-### 1. Import discovered prospects
-
-Append one JSON object per line to `data/prospects/discovered.jsonl`,
-matching `schemas/prospect.schema.json`. Unknown fields must be `null`, not
-omitted.
-
-```bash
-python3 -c "
-import json
-p = {
-  'id': 'roofing-charlotte-nc-example-co', 'business_name': 'Example Roofing Co',
-  'city': 'Charlotte', 'state': 'NC', 'country': 'US', 'niche': 'roofing',
-  'website': 'https://example.com', 'google_business_profile_url': None,
-  'maps_position': None, 'organic_position': None, 'rating': 4.4, 'review_count': 22,
-  'years_in_business': 6, 'obvious_website_issue': ['thin_service_pages'],
-  'obvious_gbp_issue': ['few_photos'], 'service_page_count': 2,
-  'competitor_gap': ['no storm-damage landing page vs. top 2 competitors'],
-  'commercial_value_signal': 'high', 'verified_business': True,
-  'source_notes': 'manual entry', 'discovered_at': '2026-09-01T00:00:00+00:00',
-  'last_audited_at': None, 'content_hash': None, 'status': 'DISCOVERED'
+```json
+{
+  "lead_id": "roofing-exampleville-ex-example-roofing-co",
+  "business_name": "Example Roofing Co.",
+  "domain": "example-roofing.test",
+  "website": "https://example-roofing.test/",
+  "city": "Exampleville",
+  "state": "EX",
+  "country": "US",
+  "niche": "roofing",
+  "phone": null,
+  "discovery_source": "roofing / Exampleville, EX",
+  "discovered_at": "2026-01-01T00:00:00+00:00",
+  "verification_status": "CANDIDATE_VERIFIED",
+  "basic_business_facts": {
+    "rating": 4.6,
+    "review_count": 32,
+    "years_in_business": 12,
+    "commercial_value_signal": "high"
+  }
 }
-with open('data/prospects/discovered.jsonl', 'a') as f:
-    f.write(json.dumps(p) + '\n')
-"
 ```
 
-### 2. Verify business identity
+## Google Sheets handoff
+
+An optional handoff surface for downstream tools (a separate LLM session,
+a spreadsheet-based workflow, a CRM import) to consume without reading raw
+local state. Four tabs, each with a distinct, non-overlapping purpose:
+
+- **`CANDIDATES`** — the discovery-only output described above.
+- **`EMAIL_READY`** / **`CONTACT_FORM_READY`** — populated only by the
+  optional `full_pipeline` mode once a lead reaches a fully-qualified,
+  QA-passed, ready-to-send state.
+- **`RESULTS`** — where an external Gmail-side process (never this
+  repository) writes back real send/reply/bounce events.
+
+The default backend (`backend: local` in `config/handoff.yaml`) requires
+zero credentials and writes to local JSON/CSV files. Google Sheets is an
+optional backend, configured generically: a Google Cloud service account
+with *Sheets-only* scope (never Drive, never Gmail), shared as an editor
+on your own private spreadsheet. See `config/handoff.example.yaml` for the
+exact fields and `docs/AUTOMATION.md`'s "Google Sheets setup" section for
+the full walkthrough. Your real service-account file path and spreadsheet
+ID belong only in your own local `config/handoff.yaml` — never commit
+them.
+
+## Setup
 
 ```bash
-python3 scripts/verify_business.py --id roofing-charlotte-nc-example-co --print-prompt
-# Claude researches and answers per schemas/verification.schema.json, then:
-python3 scripts/verify_business.py --id roofing-charlotte-nc-example-co --save verification.json
+git clone <repo-url>
+cd lead-engine
+python3 -m venv .venv && source .venv/bin/activate   # optional
+pip install pyyaml
 ```
 
-Sets status to `BUSINESS_VERIFIED`, `MANUAL_REVIEW` (probable name collision,
-needs a human), or `REJECTED` (not a real/verifiable business), per
-`config/limits.yaml: min_identity_confidence` (default 0.75).
-
-### 3. Score
+The Google Sheets backend additionally needs:
 
 ```bash
-python3 scripts/score_leads.py
+pip install google-api-python-client google-auth
 ```
 
-Rule-based, no AI. Computes `confirmed_score`, `potential_score`,
-`data_completeness`, and `missing_fields`, and sets status to
-`INITIAL_SCORE` (or `REJECTED` for hard rejects).
+Credentials are entirely optional — the local backend works with none at
+all. If you do configure Google Sheets, keep your service-account file
+outside the repository, e.g. under `$HOME/.config/lead-engine/`.
+
+## Claude authentication
+
+The discovery worker shells out to the `claude` CLI, which must already be
+authenticated in your environment. A quick smoke test:
 
 ```bash
-python3 scripts/qualify_leads.py
+claude -p "Reply with exactly AUTH_OK"
 ```
 
-Routes each `INITIAL_SCORE` record to `qualified.jsonl` (confirmed ≥70),
-`needs_enrichment.jsonl` (confirmed <70 but potential ≥70 and missing
-maps/organic position), `manual_review.jsonl` (55-69, nothing material
-missing), or `rejected.jsonl` (<55). No AI is called for any of these.
+If that doesn't return `AUTH_OK`, run `claude login` (or your
+organization's equivalent) before running the discovery worker — it fails
+closed with `CLAUDE_AUTH_REQUIRED` rather than guessing past an auth
+problem, and never loops or retries authentication.
 
-### 4. View NEEDS_ENRICHMENT
+## Running manually
+
+The narrowest entry point for one discovery-only cycle:
 
 ```bash
-python3 scripts/triage_report.py
+python3 scripts/discovery_worker.py
 ```
 
-Shows every blocked lead (`NEEDS_ENRICHMENT`, `MANUAL_REVIEW`,
-`CONTACT_UNVERIFIED`, `REVERIFY_REQUIRED`) with its confirmed/potential
-score, completeness, missing fields, recommended next action, and an
-estimated cost category (`deterministic` / `cheap_enrichment` /
-`claude_quick_audit` / `manual_verification`).
+This performs exactly the flow in the architecture diagram above and
+stops. It never touches qualification, ranking, contact research, or
+outreach.
 
-### 5. Import a Semrush CSV export
+## systemd
+
+An optional Tue–Fri scheduled run via `systemd --user`. Reference unit
+files live in `systemd/`, using a placeholder path:
 
 ```bash
-python3 scripts/import_rankings.py --market roofing-charlotte-nc --file semrush_export.csv
+cp systemd/lead-engine-daily.* ~/.config/systemd/user/
+# edit WorkingDirectory / ExecStart in lead-engine-daily.service to your
+# own absolute checkout path (replace /path/to/lead-engine)
+systemctl --user daemon-reload
+scripts/run_daily.sh --dry-run          # validate first, every time
+loginctl enable-linger "$USER"          # so it still fires while logged out
+systemctl --user enable --now lead-engine-daily.timer
 ```
 
-Auto-detects a Semrush "Organic Research > Positions" export (by its
-`Keyword`/`Position` columns) and normalizes it into
-`data/rankings/roofing-charlotte-nc.csv`.
+The timer is deliberately **not** persistent — if the machine is off or
+asleep at the scheduled time, that day's run is simply skipped rather than
+firing at an arbitrary later time. A separate, bounded same-day catch-up
+window is available (`scripts/catchup.py`) for recovering a missed run
+without turning into an unbounded backlog processor. See
+`docs/AUTOMATION.md` for the full scheduling design.
 
-### 6. Import a manual ranking CSV
+## Google Sheets setup
+
+Generic steps (no real values shown — see `config/handoff.example.yaml`):
+
+1. Create a Google Cloud project and a service account with the Sheets API
+   enabled (Sheets scope only — never Drive, never Gmail).
+2. Download the service account's JSON key to a path *outside* this repo.
+3. Create a spreadsheet with tabs named `CANDIDATES`, `EMAIL_READY`,
+   `CONTACT_FORM_READY`, and `RESULTS` (header rows self-heal on first
+   sync if a tab starts empty).
+4. Share the spreadsheet with the service account's own email address as
+   an Editor — never publish it with a public link.
+5. Set `backend: google_sheets` plus your own `service_account_file` and
+   `spreadsheet_id` in your local `config/handoff.yaml`.
+
+Full walkthrough: `docs/AUTOMATION.md`.
+
+## Testing
 
 ```bash
-python3 scripts/import_rankings.py --market roofing-charlotte-nc --file manual_rankings.csv
+python3 -m unittest discover -s tests
 ```
 
-Any CSV using the canonical column names directly (`business_name`, `domain`,
-`keyword`, `organic_position`, `maps_position`, ...) works with zero
-mapping — or a JSON snapshot (`--file snapshot.json`, a list of objects).
-No paid API is ever required.
+At the V3.8.2 milestone, the project had 578 passing tests — pure-function
+unit tests, sandboxed end-to-end subprocess tests (never touching real
+data), and static guards that assert specific dangerous capabilities
+(Gmail, outreach sending, unrestricted SEO-agent invocation) are
+structurally unreachable from the default scheduled path.
 
-Optionally roll the import into the market cache too:
+## Safety model
 
-```bash
-python3 scripts/enrich_market.py --market roofing-charlotte-nc
-```
+The default `discovery_only` scheduled path:
 
-### 7. Rescore after enrichment
+- does not access Gmail
+- does not send email
+- does not submit contact forms
+- does not automatically run SEO/specialist agents
+- does not automatically perform contact research or enrichment
+- does not fabricate rankings, contacts, costs, or any other evidence —
+  a missing fact stays `null`/`UNKNOWN`
 
-```bash
-python3 scripts/rescore_leads.py --id roofing-charlotte-nc-example-co
-python3 scripts/qualify_leads.py   # finalize routing with the new score
-```
+Every Claude subprocess the scheduled worker launches runs with
+`--restricted` and an explicit tool allowlist (`Read`, `WebSearch`,
+`WebFetch` at most) — this is a structural property of how the subprocess
+is invoked, not a promise embedded only in a prompt.
 
-Matches the prospect by domain/name against the imported ranking data, fills
-`maps_position`/`organic_position` if found, and fully recomputes the score
-— tracking `score_before_enrichment`, `score_after_enrichment`,
-`enrichment_fields_added`, `enrichment_source`, `enrichment_observed_at`.
-Still zero AI calls.
+## Repository layout
 
-### 8. Route agents and run the quick audit
+- `config/` — every threshold, cap, and budget as an editable value, never
+  hardcoded in a script.
+- `scripts/` — one script per pipeline stage; most expose pure,
+  independently-testable decision functions alongside their CLI.
+- `schemas/` — JSON Schema for every artifact a script produces.
+- `tests/` — the full test suite.
+- `docs/` — automation/scheduling design and setup guides.
+- `reports/` — dated engineering reports documenting each build phase's
+  design and validation record (real prospect/contact data redacted or
+  replaced with synthetic examples before being committed).
 
-```bash
-python3 scripts/route_agents.py --id roofing-charlotte-nc-example-co
-```
+## Roadmap
 
-Infers problem types and prints/saves a capped agent plan (≤3 agents,
-`config/routing.yaml`) to `data/leads/<id>/agent_plan_quick.json`. In this
-Claude Code session, invoke each planned agent (e.g.
-`subagent_type: "claude-seo:seo-local"`) per `prompts/quick-audit.md`'s
-scope (homepage + up to 5 pages, ≤500 words), citing every fact in
-`evidence_items[]` with a real source and timestamp. Save the result to
-`data/leads/<id>/quick_audit.json`, then apply
-`prompts/opportunity-selector.md` to pick exactly one opportunity and save
-`data/leads/<id>/opportunity.json`.
+Ideas under consideration, not commitments:
 
-### 9. Build the dossier
+- Alternate/pluggable discovery providers.
+- Browser- or API-independent discovery sources.
+- Cheaper deterministic company-discovery techniques.
+- A real external ranking-data provider integration (the current provider
+  interface is deliberately unimplemented — see `scripts/ranking_providers.py`).
+- Optional CRM integrations for the handoff surface.
+- Richer cost telemetry (e.g. per-call token-cost breakdowns over time).
 
-```bash
-python3 scripts/build_dossier.py --id roofing-charlotte-nc-example-co \
-  --agents-used claude-seo:seo-local claude-seo:seo-content
-python3 scripts/check_freshness.py --id roofing-charlotte-nc-example-co
-```
+## Contributing
 
-`build_dossier.py` is the cache/early-stop gate (reuses a fresh dossier by
-content hash, rejects if opportunity confidence is below threshold).
-`check_freshness.py` blocks a stale dossier (`REVERIFY_REQUIRED`) from
-proceeding to contact verification / email generation.
+Issues and pull requests are welcome. Before opening a PR:
 
-### 10. Verify contact
+- Run the full test suite (`python3 -m unittest discover -s tests`) and
+  make sure it stays green.
+- Never commit real prospect/contact/outreach data, credentials, or
+  personal file paths — see `.gitignore` for what's already excluded.
+- Keep the discovery-only default path's capability boundaries intact;
+  changes that let the scheduled path reach Gmail, outreach sending, or
+  unrestricted agent invocation need a very deliberate, explicit design
+  discussion first.
 
-```bash
-python3 scripts/verify_contact.py --id roofing-charlotte-nc-example-co --print-prompt
-python3 scripts/verify_contact.py --id roofing-charlotte-nc-example-co --save contact.json
-```
+## License
 
-Sets `CONTACT_VERIFIED` only if a real email was found on a public source
-(`config/limits.yaml: min_contact_confidence`, default 0.8) — a guessed
-address (e.g. assuming `info@domain.com`) can never verify, enforced in
-code. Otherwise stays `CONTACT_UNVERIFIED` and outreach is blocked.
-
-### 11. Generate the email draft
-
-```bash
-python3 scripts/generate_email.py --id roofing-charlotte-nc-example-co --print-prompt
-python3 scripts/generate_email.py --id roofing-charlotte-nc-example-co --save draft.json
-```
-
-Requires a fresh dossier and a verified contact (or pass `--preview` for a
-manual/internal-only draft that can never become `EMAIL_DRAFT_READY`).
-
-### 12. QA
-
-```bash
-python3 scripts/qa_email.py --id roofing-charlotte-nc-example-co --print-prompt
-python3 scripts/qa_email.py --id roofing-charlotte-nc-example-co --save verdict.json
-```
-
-`PASS` → `QA_PASS` (final V2 status). `REWRITE` → back to step 11.
-`REJECT` → back to step 9 (evidence itself needs review). `REVERIFY_REQUIRED`
-→ back to step 9's freshness check. An unverified recipient or an
-unsupported claim can never PASS — enforced in code, not just the prompt.
-
-### 13. Export ready-for-Gmail drafts (still never sent)
-
-```bash
-python3 scripts/export_gmail_drafts.py
-```
-
-Appends every QA-PASS, contact-verified lead to
-`data/outreach/ready-for-draft.jsonl` with `send_status: "DRAFT_ONLY"`. No
-network call, no Gmail integration — a human (or a separate tool) turns
-these into actual drafts later.
-
-### 14. Reports
-
-```bash
-python3 scripts/report_pipeline.py --date 2026-09-01   # funnel, agent usage, cache, QA pass rate
-python3 scripts/triage_report.py --date 2026-09-01      # what's blocking each stuck lead
-```
-
-## Adding things
-
-**A new niche** — add an entry to `config/niches.yaml`, including a `tier`
-(1/2/3 — see `reports/V3.1-QUALIFICATION-REPORT.md` §4 for what tier means
-for FIT scoring). No code changes needed; V2 scoring/routing and V3.1
-FIT/GAP scoring all read this file.
-
-**A new franchise/DSO/lead-gen-network brand** — add a lowercase substring
-pattern under the right category in `config/franchise_blocklist.yaml`. A
-match only triggers a research pass (never an auto-reject) to determine
-whether the specific location controls its own marketing.
-
-**A new city/market** — create `data/markets/<niche>-<city>-<state>/market.json`
-(slug from `scripts/_lib.py: market_slug`). Populate `top_competitors`,
-`review_benchmarks.median_top3`, and `common_service_architecture` at
-minimum — `score_leads.py` uses the review benchmark automatically.
-
-**A Semrush export** — `python3 scripts/import_rankings.py --market <slug>
---file export.csv`, then optionally `scripts/enrich_market.py --market
-<slug>` to roll it into the market cache.
-
-**Another claude-seo agent route** — add a `problem_type: {agents,
-max_agents}` entry to `config/routing.yaml: quick_audit_routes` (and
-optionally `deep_audit_routes`). Never-auto-run agents (paid API, rarely
-relevant) go in `never_auto_run` instead.
-
-## Future (not built in V2, documented only)
-
-`APPROVED → SENT → REPLIED → AUDIT_SENT → CALL → PROPOSAL → WON → LOST`, and
-any live Gmail send/schedule integration. No code in this repo implements or
-assumes these; see `reports/V2-COST-REVIEW.md` for the recommended V3 scope.
+License: not yet selected.

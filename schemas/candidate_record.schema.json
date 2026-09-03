@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "candidate_record.schema.json",
+  "title": "CandidateRecord",
+  "description": "V3.8.1 -- the lightweight, discovery-only-mode candidate record. Contains ONLY factual discovery information (never FIT/GAP scores, maps_position/organic_position, an SEO wedge, competitor analysis, buying-signal analysis, contact identity, an email, a dossier, an asset, an email draft, or a send window -- none of those are required or produced by discovery-only mode). Built by scripts/candidate_verification.py: build_candidate_record() from the existing prospect record (schemas/prospect.schema.json) once it reaches CANDIDATE_VERIFIED, and synced to the Google Sheets CANDIDATES tab (scripts/handoff_lib.py: CANDIDATE_COLUMNS) so ChatGPT + the user can take over from here.",
+  "type": "object",
+  "required": [
+    "lead_id", "business_name", "domain", "website", "city", "state", "country",
+    "niche", "phone", "profile_url", "discovery_source", "discovered_at",
+    "verification_status", "basic_business_facts"
+  ],
+  "properties": {
+    "lead_id": {"type": "string", "description": "Primary identity -- matches the prospect record's `id`. Sync is idempotent on this field: rediscovering the same business never creates a duplicate CANDIDATES row."},
+    "business_name": {"type": "string"},
+    "domain": {"type": ["string", "null"], "description": "Derived deterministically from `website` (scripts/rescore_leads.py: domain_of) -- never a separate research fact."},
+    "website": {"type": ["string", "null"]},
+    "city": {"type": ["string", "null"]},
+    "state": {"type": ["string", "null"]},
+    "country": {"type": ["string", "null"], "default": "US"},
+    "niche": {"type": ["string", "null"], "description": "Key into config/niches.yaml"},
+    "phone": {"type": ["string", "null"], "description": "From the raw discovery candidate -- discover_prospects.py's discovery_candidate.schema.json already captures this, but the shared prospect record does not carry it forward (V2-era shape, unchanged); this is the one field this module reads from the raw candidate rather than the persisted prospect record."},
+    "profile_url": {"type": ["string", "null"], "description": "Google Business Profile URL, if the discovery pass found one -- mirrors the prospect record's google_business_profile_url"},
+    "discovery_source": {"type": "string", "description": "e.g. 'v3.5_fresh_discovery / roofing / Indianapolis, IN' -- which market-cell discovery call produced this candidate"},
+    "discovered_at": {"type": "string", "format": "date-time"},
+    "verification_status": {"type": "string", "enum": ["CANDIDATE_VERIFIED", "CANDIDATE_REJECTED"], "description": "The deterministic basic-verification outcome (scripts/candidate_verification.py: verify_candidate_basic) -- never a FIT/GAP/qualification judgment."},
+    "basic_business_facts": {
+      "type": "object",
+      "description": "The small, honest bag of extra facts discovery already returned cheaply. Every field is optional/nullable -- missing stays null, never guessed.",
+      "properties": {
+        "rating": {"type": ["number", "null"], "minimum": 0, "maximum": 5},
+        "review_count": {"type": ["integer", "null"], "minimum": 0},
+        "years_in_business": {"type": ["integer", "null"]},
+        "commercial_value_signal": {"type": ["string", "null"], "enum": ["high", "medium", "low", "none", null]},
+        "obvious_website_issue": {"type": "array", "items": {"type": "string"}},
+        "obvious_gbp_issue": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

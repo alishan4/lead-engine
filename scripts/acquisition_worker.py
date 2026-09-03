@@ -43,6 +43,7 @@ from _lib import (
 )
 from claude_invoke import run_claude, ClaudeAuthRequired, ClaudeTimeout, ClaudeInvocationError
 import claude_preflight
+import rank_enrichment
 
 SCRIPTS = ROOT / "scripts"
 SCHEMAS = ROOT / "schemas"
@@ -679,6 +680,33 @@ def run(max_prospects=None, trigger_type="NORMAL_SCHEDULE", sandbox=False, log=p
         if not deadline.exceeded():
             call_plain(["qualify_leads.py", "--v3"], timeout=60)
 
+        # V3.8: drain the ranking-enrichment backlog BEFORE any fresh
+        # discovery capacity is spent -- this is the whole point of V3.8
+        # (make NEEDS_ENRICHMENT a temporary queue, not a parking lot).
+        # Fully deterministic, zero-Claude, zero-network-credential (see
+        # scripts/rank_enrichment.py / scripts/ranking_providers.py) --
+        # never counted against or competing with this worker's Claude
+        # research budget/timeouts above. Runs even if the deadline is
+        # already exceeded is skipped -- an exhausted deadline means no
+        # further work of ANY kind starts this cycle, ranking enrichment
+        # included; its own backlog simply carries over untouched.
+        ranking_stats = rank_enrichment.empty_stats()
+        if not deadline.exceeded():
+            log("Checking ranking-enrichment backlog...")
+            ranking_stats = rank_enrichment.run_cycle(log=log, deadline=deadline)
+            log(f"Ranking enrichment: backlog_before={ranking_stats['ranking_backlog_before']} "
+                f"leads_attempted={ranking_stats['ranking_leads_attempted']} "
+                f"queries_attempted={ranking_stats['ranking_queries_attempted']} "
+                f"observations_imported={ranking_stats['ranking_observations_imported']} "
+                f"provider_failures={ranking_stats['ranking_provider_failures']} "
+                f"qualified_after_ranking={ranking_stats['qualified_after_ranking']} "
+                f"backlog_after={ranking_stats['ranking_backlog_after']}")
+        stats.update(ranking_stats)
+
+        # Newly-qualified leads can come from either this cycle's stage_a
+        # resume work OR ranking enrichment's deterministic re-evaluation
+        # just above -- both need to continue downstream (intelligence ->
+        # dossier -> asset -> contact identity) before fresh discovery runs.
         discovered = read_jsonl(PROSPECTS / "discovered.jsonl")
         newly_qualified = [p["id"] for p in discovered if p.get("status") in ("QUALIFIED", "HIGH_PRIORITY")]
         for pid in set(stage_c_ids) | set(newly_qualified):
@@ -687,7 +715,7 @@ def run(max_prospects=None, trigger_type="NORMAL_SCHEDULE", sandbox=False, log=p
             process_stage_c_only(ctx, pid)
 
         if not deadline.exceeded() and ctx.lead_budget_available():
-            log("Pending-lead work complete. Checking fresh-discovery capacity...")
+            log("Pending-lead and ranking-enrichment work complete. Checking fresh-discovery capacity...")
             discovery_phase(ctx)
 
         final = read_jsonl(PROSPECTS / "discovered.jsonl")

@@ -14,9 +14,11 @@ import argparse
 import json
 import sys
 
-from _lib import (PROSPECTS, LEADS, load_yaml, read_jsonl, lead_dir, load_json, write_json,
+from _lib import (ROOT, PROSPECTS, LEADS, load_yaml, read_jsonl, lead_dir, load_json, write_json,
                    set_status_everywhere, now_iso)
 from outreach_lib import is_suppressed, account_lock_check, record_event
+
+PROMPT_PATH = ROOT / "prompts" / "contact-identity-verification.md"
 
 ENTRY_STATUS = "ASSET_STAGED"
 
@@ -114,8 +116,7 @@ def main():
         raise SystemExit(f"Prospect {args.id} not found in discovered.jsonl")
 
     if args.print_prompt:
-        with open("prompts/contact-identity-verification.md") as f:
-            template = f.read()
+        template = PROMPT_PATH.read_text()
         print(template)
         print(f"\nBusiness: {p.get('business_name')} ({p.get('niche')}, {p.get('city')}, {p.get('state')})")
         print(f"Website: {p.get('website')}")

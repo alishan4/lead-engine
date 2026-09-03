@@ -71,9 +71,10 @@
         "CONTACT_FORM_READY", "CONTACT_REVERIFY_REQUIRED", "SUPPRESSED", "ACCOUNT_LOCKED",
         "QA_FAILED", "READY_TO_SEND", "SEND_WINDOW_PLANNED", "DRY_RUN_SENT", "GMAIL_SENT",
         "DELIVERY_CHECK", "NO_BOUNCE_DETECTED", "DELIVERY_FAILED",
-        "FOLLOW_UP_DUE", "AWAITING_REPLY", "REPLIED", "CLOSED", "HUMAN_REVIEW", "RECYCLE_ELIGIBLE"
+        "FOLLOW_UP_DUE", "AWAITING_REPLY", "REPLIED", "CLOSED", "HUMAN_REVIEW", "RECYCLE_ELIGIBLE",
+        "CANDIDATE_VERIFIED", "CANDIDATE_REJECTED"
       ],
-      "description": "SCORED is a legacy V1 alias, no longer produced but still accepted on old records; V2 produces INITIAL_SCORE instead. V3.1 (qualify_leads.py --v3) adds the FRANCHISE_*/COMMERCIAL_FIT_*/BUYING_SIGNALS_*/CONTACTABILITY_*/GOOGLE_GAP_*/FIT_SCORED/GAP_SCORED/HIGH_PRIORITY states -- these are a parallel qualification track that runs instead of (not in addition to) V2's INITIAL_SCORE->NEEDS_ENRICHMENT/QUALIFIED path; a record is on one track or the other, never both at once."
+      "description": "SCORED is a legacy V1 alias, no longer produced but still accepted on old records; V2 produces INITIAL_SCORE instead. V3.1 (qualify_leads.py --v3) adds the FRANCHISE_*/COMMERCIAL_FIT_*/BUYING_SIGNALS_*/CONTACTABILITY_*/GOOGLE_GAP_*/FIT_SCORED/GAP_SCORED/HIGH_PRIORITY states -- these are a parallel qualification track that runs instead of (not in addition to) V2's INITIAL_SCORE->NEEDS_ENRICHMENT/QUALIFIED path; a record is on one track or the other, never both at once. V3.8.1 adds CANDIDATE_VERIFIED/CANDIDATE_REJECTED -- a THIRD, deliberately terminal track produced only by discovery-only mode (scripts/discovery_worker.py): CANDIDATE_VERIFIED means deterministic basic verification passed and the record is handed off via the CANDIDATES Google Sheet for ChatGPT+user to continue; CANDIDATE_REJECTED means it failed that cheap deterministic gate. Neither status is currently in acquisition_worker.py's STAGE_A_STATUSES, so a CANDIDATE_VERIFIED record is NOT automatically picked up by a later full_pipeline run -- promoting one into the full research pipeline is a deliberate future step (e.g. a human resetting its status to BUSINESS_VERIFIED), not an automatic side effect of this status existing."
     },
     "score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "Alias for confirmed_score, kept for V1 compatibility"},
     "score_breakdown": {"type": ["object", "null"]},

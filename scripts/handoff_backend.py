@@ -48,6 +48,19 @@ class HandoffBackend:
         handoff_lib.merge_row) so external-owned fields are never lost."""
         raise NotImplementedError
 
+    def export_candidates(self, candidate_rows):
+        """V3.8.1 -- upserts the CANDIDATES tab/file by lead_id (never
+        appends a duplicate for an already-synced lead_id). An ADDITIONAL
+        handoff surface -- never touches EMAIL_READY/CONTACT_FORM_READY/
+        RESULTS."""
+        raise NotImplementedError
+
+    def all_candidate_rows(self):
+        """Returns {lead_id: row} for the CANDIDATES tab/file -- the
+        'existing state' scripts/sync_handoff.py: sync_candidates() merges
+        fresh rows into (see handoff_lib.merge_candidate_row)."""
+        raise NotImplementedError
+
     def import_results(self):
         """Returns a list of raw external result-event dicts (see
         schemas/outreach_result_event.schema.json) the backend has
@@ -86,6 +99,11 @@ class LocalFileBackend(HandoffBackend):
         self.email_ready_path = self.dir / cfg["email_ready_file"]
         self.contact_form_ready_path = self.dir / cfg["contact_form_ready_file"]
         self.sync_log_path = self.dir / cfg["sync_log_file"]
+        # V3.8.1 -- "candidates_file" defaults to "candidates.json" so an
+        # on-disk config saved before this key existed keeps working
+        # unchanged (same backward-compatible-default pattern as
+        # GoogleSheetsBackend.import_results()'s results_tab).
+        self.candidates_path = self.dir / cfg.get("candidates_file", "candidates.json")
 
     def _load(self, path):
         if not path.exists():
@@ -153,6 +171,20 @@ class LocalFileBackend(HandoffBackend):
     def import_results(self):
         return []  # local fallback's result inbox is data/outreach/outreach_results.jsonl, read directly
 
+    def export_candidates(self, candidate_rows):
+        from handoff_lib import CANDIDATE_COLUMNS
+        store = self._load(self.candidates_path)
+        for row in candidate_rows:
+            store[row["lead_id"]] = row
+        self._write(self.candidates_path, store)
+        self._write_csv(self.candidates_path, CANDIDATE_COLUMNS)
+        append_jsonl(self.sync_log_path, {
+            "synced_at": now_iso(), "backend": "LocalFileBackend", "candidates_count": len(candidate_rows),
+        })
+
+    def all_candidate_rows(self):
+        return self._load(self.candidates_path)
+
 
 class GoogleSheetsBackend(HandoffBackend):
     """
@@ -214,17 +246,18 @@ class GoogleSheetsBackend(HandoffBackend):
         service = build("sheets", "v4", credentials=creds)
         return service, spreadsheet_id
 
-    def _upsert_tab(self, service, spreadsheet_id, tab_name, rows):
+    def _upsert_tab(self, service, spreadsheet_id, tab_name, rows, columns=None):
         from handoff_lib import COLUMNS
+        columns = columns or COLUMNS
         sheet = service.spreadsheets()
         existing = sheet.values().get(spreadsheetId=spreadsheet_id, range=f"{tab_name}!A:A").execute()
         existing_ids = [r[0] for r in existing.get("values", [])[1:]] if existing.get("values") else []
         id_to_row_num = {lead_id: i + 2 for i, lead_id in enumerate(existing_ids)}  # header is row 1
 
-        header = [list(COLUMNS)]
+        header = [list(columns)]
         updates, appends = [], []
         for row in rows:
-            values = [row.get(c) for c in COLUMNS]
+            values = [row.get(c) for c in columns]
             if row["lead_id"] in id_to_row_num:
                 updates.append({"range": f"{tab_name}!A{id_to_row_num[row['lead_id']]}", "values": [values]})
             else:
@@ -245,8 +278,9 @@ class GoogleSheetsBackend(HandoffBackend):
         self._upsert_tab(service, spreadsheet_id, self.cfg["email_ready_tab"], email_ready_rows)
         self._upsert_tab(service, spreadsheet_id, self.cfg["contact_form_ready_tab"], contact_form_ready_rows)
 
-    def _read_tab_rows(self, service, spreadsheet_id, tab_name):
+    def _read_tab_rows(self, service, spreadsheet_id, tab_name, columns=None):
         from handoff_lib import COLUMNS
+        columns = columns or COLUMNS
         resp = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=f"{tab_name}!A:Z").execute()
         values = resp.get("values", [])
         if not values:
@@ -256,7 +290,7 @@ class GoogleSheetsBackend(HandoffBackend):
         for r in body:
             row = dict(zip(header, r))
             if row.get("lead_id"):
-                rows[row["lead_id"]] = {c: row.get(c) for c in COLUMNS}
+                rows[row["lead_id"]] = {c: row.get(c) for c in columns}
         return rows
 
     def all_rows(self):
@@ -265,6 +299,23 @@ class GoogleSheetsBackend(HandoffBackend):
         rows.update(self._read_tab_rows(service, spreadsheet_id, self.cfg["email_ready_tab"]))
         rows.update(self._read_tab_rows(service, spreadsheet_id, self.cfg["contact_form_ready_tab"]))
         return rows
+
+    def export_candidates(self, candidate_rows):
+        """V3.8.1 -- upserts the CANDIDATES tab (config/handoff.yaml:
+        google_sheets.candidates_tab, defaulting to "CANDIDATES" for
+        backward compatibility with a config predating this key), reusing
+        the exact same idempotent-by-lead_id _upsert_tab() every other tab
+        already uses -- no separate/duplicated Sheets logic."""
+        from handoff_lib import CANDIDATE_COLUMNS
+        service, spreadsheet_id = self._client()
+        tab_name = self.cfg.get("candidates_tab") or "CANDIDATES"
+        self._upsert_tab(service, spreadsheet_id, tab_name, candidate_rows, columns=CANDIDATE_COLUMNS)
+
+    def all_candidate_rows(self):
+        from handoff_lib import CANDIDATE_COLUMNS
+        service, spreadsheet_id = self._client()
+        tab_name = self.cfg.get("candidates_tab") or "CANDIDATES"
+        return self._read_tab_rows(service, spreadsheet_id, tab_name, columns=CANDIDATE_COLUMNS)
 
     def import_results(self):
         """Reads the results tab (`config/handoff.yaml:

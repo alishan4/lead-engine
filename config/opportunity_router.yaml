@@ -1,7 +1,7 @@
 # V3.2 opportunity -> claude-seo specialist routing. Agent names below were
-# confirmed against the actual /home/user/Development/experiments/claude-seo/agents/
-# directory contents at implementation time -- none invented. claude-seo
-# itself is never modified by this project.
+# confirmed against the actual <repo-root>/../claude-seo/agents/ directory
+# contents at implementation time -- none invented. claude-seo itself is
+# never modified by this project.
 #
 # HARD RULE: this table is consulted at most twice per prospect (first
 # specialist + at most one second opinion) -- see config/limits.yaml:

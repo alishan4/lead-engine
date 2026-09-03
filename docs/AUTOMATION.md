@@ -17,10 +17,10 @@ you run it.
 ## Fedora scheduler (systemd --user)
 
 Reference copies of the installed unit files live in `systemd/` in this
-repo. They hardcode the absolute path of the machine they were generated
-on (`/home/user/Development/experiments/lead-engine`) — on a new machine/
-user, copy them to `~/.config/systemd/user/`, fix `WorkingDirectory`/
-`ExecStart` to the new checkout's absolute path, then:
+repo. `WorkingDirectory`/`ExecStart` in `lead-engine-daily.service` are
+placeholders (`/path/to/lead-engine`) — on any machine, copy the unit
+files to `~/.config/systemd/user/` and replace that placeholder with your
+own checkout's absolute path, then:
 
 ```
 systemctl --user daemon-reload
@@ -97,7 +97,83 @@ V3.6.1 safety rule:
 Ranking-evidence ingestion and re-evaluation (also V3.7) are documented in
 their own section below, after the READY_TO_SEND handoff.
 
-## Lead Engine daily run — what it actually automates
+## Discovery-Only Production Mode (V3.8.1) — the current scheduled default
+
+`config/acquisition.yaml: production_mode` decides which flow
+`scripts/run_daily.py` runs. **`discovery_only` is the default** and is
+what the scheduled timer actually runs day to day. `full_pipeline`
+reproduces every V3.5–V3.8 stage described in the rest of this document
+unchanged, still fully available for an explicit, deliberate invocation.
+`run_daily.py` fails closed (non-zero exit) on any other value.
+
+Why: real production spend hit roughly $100 over two days of building/
+running the full pipeline unattended — far more than this stage of
+lead-acquisition should cost. The new operating principle is **CLAUDE
+DISCOVERS, CLAUDE DOES NOT ANALYZE**: Fedora's job shrinks to discovering
+candidates and doing cheap, deterministic verification; ChatGPT + the user
+own everything from qualification onward.
+
+**Discovery-only flow** (`scripts/discovery_worker.py`, invoked instead of
+`scripts/acquisition_worker.py`):
+
+```
+Claude auth preflight (fails closed once, no retry loop)
+  -> for each market cell (config/acquisition.yaml: discovery_markets,
+     V3.7's tier-weighted rotation, unchanged):
+       check cost/call/time governors BEFORE calling Claude
+       -> ONE Claude call: discover_prospects.py (unchanged)
+       -> deterministic basic verification (candidate_verification.py,
+          ZERO additional Claude calls): real business? contact surface
+          present? city/state/niche present?
+       -> CANDIDATE_VERIFIED or CANDIDATE_REJECTED (new, terminal statuses
+          -- never touches QUALIFIED/NEEDS_ENRICHMENT/MANUAL_REVIEW/
+          CONTACT_FORM_READY/READY_TO_SEND records)
+  -> sync_handoff.py: sync_candidates() -- upserts the CANDIDATES Google
+     Sheet by lead_id (idempotent -- rediscovery never duplicates a row)
+  -> report_discovery_only.py -- a short report (candidates discovered/
+     verified/saved, duplicates skipped, markets explored, cost/budget
+     status, and an explicit SKIPPED line for every downstream stage)
+  -> STOP
+```
+
+Nothing below basic verification runs automatically: no `qualify_leads.py
+--v3`, no deterministic intelligence scan, no dossier/asset, no contact
+identity, no draft/QA/send-window planning, no `export_ready_to_send.py`,
+no ranking enrichment, no specialist agent, no Gmail access, no
+contact-form submission.
+
+**Hard cost governors** (`config/discovery_only.yaml`), checked BEFORE
+every Claude call:
+
+| Governor | Default | Enforcement |
+|---|---|---|
+| `daily_claude_budget_usd` | 3.00 | Shared across every invocation that calendar day (scheduled run, same-day catch-up, manual retry) via `scripts/cost_ledger.py`'s durable `data/runtime/cost/<date>.json` ledger (gitignored) |
+| `max_claude_calls_per_run` | 8 | Independent of $ observability -- holds even if cost can't be measured |
+| `max_worker_runtime_seconds` | 600 | Far smaller than `full_pipeline`'s 2700s |
+| `max_market_cells_per_run` | 8 | Bounds research scope independently of the call cap |
+| `min_candidates_target` / `max_candidates_target` | 10 / 20 | A **goal**, never a quota -- never manufactured, never a reason to exceed any governor above |
+
+Hitting a governor is reported as `budget_status` (`OK` / `EXHAUSTED` /
+`CALL_CAP_REACHED`) and handled by **saving completed work, syncing the
+CANDIDATES sheet, writing the report, and stopping** -- never retried,
+never a different market cell, never treated as a pipeline failure.
+
+Real cost/token figures come straight from `claude -p`'s own JSON envelope
+(`scripts/claude_invoke.py: run_claude_with_meta`) -- `total_cost_usd`,
+`usage.input_tokens`/`usage.output_tokens` -- never invented. When a call's
+envelope doesn't report them, every cost field for that day is honestly
+`None`/`UNKNOWN` rather than guessed, and only the call-count/time
+governors remain enforceable.
+
+```
+python3 scripts/discovery_worker.py                       # one discovery-only cycle
+python3 scripts/discovery_worker.py --trigger-type SAME_DAY_CATCH_UP
+```
+
+See `reports/V3.8.1-DISCOVERY-ONLY-PRODUCTION-REPORT.md` for the full
+design, call graph, and cost-control rationale.
+
+## Lead Engine daily run — what it actually automates (full_pipeline mode)
 
 ### V3.5 (current): the Claude acquisition worker runs first
 
@@ -231,6 +307,75 @@ python3 scripts/import_ranking_observation.py --niche roofing --location "Columb
     --query "roof replacement columbus oh" --maps-position 6 --observed-at 2026-09-06 \
     --source manual_maps_check --business-name "..." --domain "..."
 python3 scripts/reevaluate_needs_enrichment.py --id <slug>        # or --market <market_id> / --all
+```
+
+## Automated Ranking Enrichment (V3.8)
+
+V3.7 gave a human two CLIs to close the ranking-evidence gap; V3.8 makes
+draining that backlog part of the daily automated cycle, without adding any
+new Claude spend, live provider call, or credential. See
+`OPERATING-RULES.md`'s V3.8 update for the full policy context and
+`reports/V3.8-AUTOMATED-RANKING-ENRICHMENT-REPORT.md` for the design writeup.
+
+**Daily order**, inside `scripts/acquisition_worker.py`'s `run()`:
+
+```
+resume pending-lead work (unchanged V3.5)
+  -> qualify_leads.py --v3
+  -> scripts/rank_enrichment.py: run_cycle()      # V3.8, new
+       -> build_enrichment_queue()                  (NEEDS_ENRICHMENT only, prioritized,
+                                                       MANUAL_REVIEW never included)
+       -> select_queries() per lead                  (2-4 money queries, config/niches.yaml
+                                                       money_keywords, never invented)
+       -> ranking_providers.attempt_query() per query, providers tried in
+          config/ranking_enrichment.yaml order:
+            ManualImportProvider  -- reads data/rankings/<market_id>.csv
+            SemrushFileProvider   -- reads a pre-vetted file dropped in
+                                      config/ranking_enrichment.yaml: inbox_dir
+            (external_api slot exists but is NOT enabled -- see below)
+       -> import_ranking_observation.import_observations() for anything new
+       -> reevaluate_needs_enrichment.reevaluate_one() for every lead touched
+       -> qualify_leads.py --v3 (only if any fields were actually added)
+  -> advance newly QUALIFIED/HIGH_PRIORITY leads downstream (unchanged V3.2/V3.3 chain)
+  -> fresh discovery (unchanged V3.5/V3.7, same caps as before -- never enlarged by V3.8)
+```
+
+**Provider abstraction** (`scripts/ranking_providers.py`) -- four possible
+outcomes per (lead, query), never a fifth silent "treat missing as poor
+rank" outcome: `ALREADY_SATISFIED` (fresh, valid evidence already on file --
+nothing to import), `OBSERVATION` (a new, valid observation to import),
+`RANKING_SOURCE_REQUIRED` (no provider could answer -- the honest,
+fail-closed default), `FAILURE` (a provider itself broke -- timeout,
+malformed data, an entity mismatch -- isolated per lead/query, never
+blocking another lead or query, never a fabricated pass).
+
+**Why no automatic provider is enabled today**: `ExternalRankProvider` is a
+deliberately unimplemented interface -- there is no free/zero-cost way to
+get a defensible, real Maps/organic position (Google has no such API;
+scraping a SERP is exactly the "generic WebSearch ordering claimed as a
+geo-local rank" this project explicitly forbids), and no paid rank-tracking
+credential (DataForSEO/SerpApi/ValueSERP/Semrush API/similar) is configured
+in this environment. Enabling one is a separate, explicitly authorized
+future phase -- a real provider key, a cost review -- exactly like
+`scripts/send_executor.py`'s real-send path.
+
+**Config** (`config/ranking_enrichment.yaml`): `max_enrichment_leads_per_run`,
+`max_queries_per_lead` / `min_queries_per_lead`,
+`max_provider_requests_per_run`, `freshness_days` (kept equal to
+`config/limits.yaml: ranking_freshness_days`, guarded by a test),
+`inbox_dir`, and the ordered `providers` list.
+
+**Reporting**: `scripts/rank_enrichment.py: run_cycle()`'s returned stats
+(`ranking_backlog_before/after`, `ranking_leads_attempted`,
+`ranking_queries_attempted`, `ranking_observations_imported`,
+`ranking_provider_failures`, `qualified_after_ranking`,
+`still_needs_enrichment`, `ranking_cost_estimate`) flow straight into
+`scripts/acquisition_worker.py`'s returned stats dict and from there into
+`data/runtime/daily_runs/<date>.json`, exactly like every other V3.5+ field.
+
+```
+python3 scripts/rank_enrichment.py --dry-run-queue   # inspect the prioritized backlog, touches nothing
+python3 scripts/rank_enrichment.py                   # run one bounded enrichment cycle, prints stats JSON
 ```
 
 ## V3.6 shared handoff bridge

@@ -1,0 +1,31 @@
+# EXAMPLE — copy this file to config/handoff.yaml's google_sheets: block
+# (or just edit config/handoff.yaml directly) and fill in your OWN values.
+# This file itself contains no real credentials or private values and is
+# safe to keep committed. See docs/AUTOMATION.md "Google Sheets setup"
+# for the full walkthrough of provisioning a service account.
+#
+# Everything not shown here (local_backend, result_events, tracker) is
+# identical to config/handoff.yaml's committed defaults -- this example
+# only calls out the two fields you actually need to change to enable the
+# optional Google Sheets backend.
+
+backend: google_sheets   # "local" (default, zero credentials) or "google_sheets"
+
+google_sheets:
+  # Absolute path to YOUR OWN downloaded service-account JSON key.
+  # NEVER place this file inside the repo -- keep it under your own
+  # config directory (e.g. ~/.config/lead-engine/), which .gitignore's
+  # service-account*.json / credentials*.json patterns also cover as a
+  # second line of defense if it ever ends up inside the checkout anyway.
+  service_account_file: "/absolute/path/to/your/service-account.json"
+
+  # The target spreadsheet's ID, from its URL:
+  #   https://docs.google.com/spreadsheets/d/<THIS-PART>/edit
+  spreadsheet_id: "your-own-spreadsheet-id-here"
+
+  # Tab names -- safe to leave at these defaults.
+  candidates_tab: "CANDIDATES"
+  email_ready_tab: "EMAIL_READY"
+  contact_form_ready_tab: "CONTACT_FORM_READY"
+  results_tab: "RESULTS"
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]

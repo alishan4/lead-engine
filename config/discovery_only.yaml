@@ -1,0 +1,130 @@
+# V3.8.1 -- Discovery-Only Production Mode + Cost-Control Amendment. Every
+# cap/budget the DEFAULT scheduled path (config/acquisition.yaml:
+# production_mode: discovery_only) obeys. See OPERATING-RULES.md's V3.8.1
+# update and reports/V3.8.1-DISCOVERY-ONLY-PRODUCTION-REPORT.md.
+#
+# Operating principle: CLAUDE DISCOVERS, CLAUDE DOES NOT ANALYZE. The only
+# Claude call this mode ever makes is scripts/discover_prospects.py's
+# existing per-market-cell discovery call (unchanged, reused as-is).
+# Verification is 100% deterministic (scripts/candidate_verification.py) --
+# zero additional Claude spend per candidate. Everything below this stage
+# (FIT/GAP/ranking/SEO agents/contact identity/outreach/Gmail) is a
+# scheduled-path routing decision made by scripts/run_daily.py, not a
+# capability removed from this codebase -- see config/acquisition.yaml:
+# production_mode: full_pipeline for the unchanged, still-available manual
+# path that runs all of it.
+
+# Candidate count is a GOAL, never a quota. These bound how far discovery
+# is ALLOWED to go; they never justify manufacturing candidates or
+# spending past a budget/call/time limit merely to reach the target. If
+# only 3 defensible candidates are found within budget, save 3 and stop.
+min_candidates_target: 10
+max_candidates_target: 20
+
+# --- Cost governors -- checked BEFORE every Claude call, never only after ---
+# Priority order when limits conflict (see report Sec. "New north-star
+# metrics"): 1. respect budget, 2. candidate quality, 3. dedupe, 4. failure
+# isolation, 5. candidate count. A candidate target is NEVER a reason to
+# exceed any governor below.
+
+# Hard $ ceiling per CALENDAR DAY (Asia/Karachi -- same civil day the
+# scheduled timer and catch-up window already use), shared across EVERY
+# invocation that day: the normal scheduled run, a same-day catch-up run,
+# and any manual/validation invocation. Enforced via the durable ledger at
+# data/runtime/cost/<date>.json (scripts/cost_ledger.py, gitignored) -- a
+# 12:00 run that spends $2.40 leaves only $0.60 for a same-day catch-up,
+# never a fresh $3.00. Real, observed `claude -p` cost (total_cost_usd from
+# its own JSON envelope) is what's compared against this -- never invented.
+daily_claude_budget_usd: 3.00
+
+# Independent circuit breaker, enforced regardless of whether $ cost is
+# observable in this environment. Conservative for discovery-only: at most
+# this many `claude -p` invocations in ONE run. Each is one bounded
+# market-cell discovery call (never a per-candidate call in this mode).
+max_claude_calls_per_run: 8
+
+# Wall-clock budget for the ENTIRE discovery-only cycle -- deliberately far
+# smaller than full_pipeline's 2700s (config/acquisition.yaml), since this
+# mode never proceeds past cheap/deterministic verification. Chosen so
+# even max_claude_calls_per_run calls each running to their own per-call
+# timeout (max_claude_call_seconds_research, 300s, reused unchanged from
+# config/acquisition.yaml) plus deterministic overhead fit comfortably
+# inside one conservative ceiling without relying on every call finishing
+# early.
+max_worker_runtime_seconds: 600
+
+# Bounded retry -- ONLY for a genuine transient infrastructure failure
+# (ClaudeTimeout on a real call), never to "rescue" a low-value or
+# ambiguous discovery result. A market cell that fails even after this
+# retry is recorded as a failure and the run moves to the next cell --
+# never a deeper research escalation, never a second agent.
+reliability:
+  retry_on_timeout: true
+  max_timeout_retries: 1
+
+# Per-call cost circuit breaker, passed straight to `claude -p
+# --max-budget-usd`. Deliberately smaller than full_pipeline's $1.00
+# (config/acquisition.yaml) -- a single discovery-only market-cell call
+# doing exactly one bounded research task should cost well under this.
+max_budget_usd_per_call: 0.50
+
+# Bounds how many market cells (config/acquisition.yaml: discovery_markets,
+# reused unchanged -- niches/cities/tier-weighted rotation) this mode will
+# even attempt to explore in one run, independent of the Claude-call cap
+# above (a cap on RESEARCH SCOPE, not just on spend) -- avoids depending on
+# max_claude_calls_per_run alone to bound how far the market rotation walks
+# before the loop naturally exits, so both governors would have to be
+# loosened together for this mode to accidentally explore far more markets
+# than intended.
+max_market_cells_per_run: 8
+
+# V3.8.2 -- the minimum remaining worker runtime (scripts/discovery_worker.py:
+# Deadline.remaining_seconds()) required to even START a new Claude call.
+# Checked before EVERY spawn, including each retry. If less than this many
+# seconds remain, the worker stops cleanly WITHOUT spawning Claude --
+# starting a call that has no realistic chance to complete (e.g. 37s left
+# on a call that normally takes 60-90s+) just wastes a call-budget slot on
+# a near-certain timeout. When a call DOES start, its own subprocess
+# timeout is separately clamped to min(the normal per-call timeout,
+# whatever runtime actually remains at that moment) -- this floor and that
+# clamp work together, not as alternatives: the floor decides whether to
+# start at all, the clamp bounds an already-started call's worst case.
+# 60s was chosen from the 2026-09-03 live validation's own observed timing
+# (the one real successful discovery call took on the order of a minute;
+# the failed one ran 90.9s before hitting its own budget circuit breaker)
+# -- below 60s remaining, a fresh call is unlikely to produce anything
+# useful before being cut off either way.
+min_seconds_to_start_claude_call: 60
+
+# V3.8.2 -- relationship between max_budget_usd_per_call, daily_claude_budget_usd,
+# max_claude_calls_per_run, max_worker_runtime_seconds, and the candidate
+# target (documented per V3.8.2 Sec.7 -- NOT a reason to change any value
+# below without deliberately re-deriving this arithmetic):
+#
+#   worst-case per-run $ exposure = max_budget_usd_per_call x max_claude_calls_per_run
+#                                  = 0.50 x 8 = $4.00
+#
+# This EXCEEDS daily_claude_budget_usd ($3.00) -- meaning the per-run call
+# cap alone is NOT sufficient to guarantee a single run stays inside the
+# daily ceiling in a worst-case-cost scenario (every call landing right at
+# its own per-call cap). The DAILY $ LEDGER (scripts/cost_ledger.py),
+# checked before every attempt, is what actually closes that gap in
+# practice -- once accumulated spend crosses $3.00 partway through a run,
+# check_before_call() returns EXHAUSTED and no further attempt is reserved,
+# regardless of how many call slots remain. The two governors are
+# deliberately NOT raised to make the arithmetic "clean" (e.g. capping
+# calls at 6 instead of 8): a real call has been observed to slightly
+# EXCEED its own $0.50 cap (a live $0.5358346 charge on 2026-09-03) before
+# claude -p's own internal accounting aborted it, so max_budget_usd_per_call
+# is a soft/best-effort ceiling from the CLI's own perspective, not a hard
+# guarantee -- treating 8 x 0.50 as an exact worst case would itself be a
+# false precision. The daily ledger is the real backstop; max_claude_calls_per_run
+# is a defense-in-depth backstop for when $ tracking becomes unobservable
+# (see budget_accounting_status in scripts/discovery_worker.py: CostGuard).
+# max_worker_runtime_seconds (600s) and min_seconds_to_start_claude_call
+# (60s) bound wall-clock exposure independently of both $ governors above.
+# Per V3.8.1's own hard rule, still unchanged: max_candidates_target is a
+# GOAL and never overrides any governor on this page.
+#
+# max_budget_usd_per_call is intentionally NOT raised by this file -- see
+# the report for the explicit "do not raise it automatically" instruction.

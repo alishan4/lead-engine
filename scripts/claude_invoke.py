@@ -48,26 +48,118 @@ POLICY_PREAMBLE = (
 )
 
 
-class ClaudeAuthRequired(Exception):
+class ClaudeCallError(Exception):
+    """V3.8.2 -- common base for every exception this module raises after a
+    real subprocess was spawned. Always carries `.meta` (see _empty_meta/
+    _extract_meta) -- whatever real cost/usage data could be recovered from
+    the failed call's own output, never fabricated. A failure can still be
+    billable: the live V3.8.1 validation observed a real $0.5358346 charge
+    on a call that exited non-zero after hitting its own --max-budget-usd
+    circuit breaker mid-research. Callers (scripts/discovery_worker.py)
+    MUST read `.meta` off a caught exception before discarding it -- a
+    failed call's real cost must still reach the daily ledger."""
+
+    def __init__(self, message, meta=None):
+        super().__init__(message)
+        self.meta = meta if meta is not None else _empty_meta()
+
+
+class ClaudeAuthRequired(ClaudeCallError):
     """Preflight or a real call found Claude auth unavailable/expired. The
     caller must fail closed: record CLAUDE_AUTH_REQUIRED and stop starting
     new work, never invent a result and never treat this as a per-lead
     research failure."""
 
 
-class ClaudeTimeout(Exception):
+class ClaudeTimeout(ClaudeCallError):
     """The subprocess exceeded its own timeout. Caller must record this as
-    an incomplete unit of work, never as a completed one."""
+    an incomplete unit of work, never as a completed one. `.meta` is
+    populated from whatever partial stdout/stderr Python's subprocess
+    module captured before killing the process (subprocess.TimeoutExpired's
+    own .stdout/.stderr attributes) -- often empty/unparseable for a real
+    timeout, but checked defensively rather than assumed absent."""
 
 
-class ClaudeInvocationError(Exception):
+class ClaudeInvocationError(ClaudeCallError):
     """Any other invocation failure (non-zero exit, malformed envelope,
     budget exceeded, missing structured_output). Caller turns this into a
-    per-lead failure -- never a fabricated or guessed result."""
+    per-lead failure -- never a fabricated or guessed result. `.meta` is
+    populated from the failed process's own stdout when it parses as a real
+    `claude -p --output-format json` envelope (this is the common case for
+    a --max-budget-usd trip: the CLI still emits a complete JSON envelope
+    reporting the real cost before exiting non-zero)."""
 
 
 def _cfg():
     return load_yaml("acquisition.yaml")
+
+
+def _empty_meta():
+    """V3.8.1 -- the honest 'nothing observed yet' shape. cost_observable/
+    tokens_observable are False until a real envelope field is actually
+    seen; scripts/cost_ledger.py must never treat a missing field as $0 or
+    0 tokens -- that would silently understate real spend."""
+    return {
+        "total_cost_usd": None, "cost_observable": False,
+        "input_tokens": None, "output_tokens": None, "tokens_observable": False,
+        "duration_ms": None,
+    }
+
+
+def _extract_meta(envelope):
+    """Pure: pulls whatever real cost/usage fields a `claude -p
+    --output-format json` envelope actually reports. Every field defaults
+    to None/False on absence -- never a guessed number. See the real
+    envelope shape observed in production (data/runtime/logs/*.log,
+    2026-09-03): `total_cost_usd`, `usage.input_tokens`, `usage.output_tokens`."""
+    meta = _empty_meta()
+    cost = envelope.get("total_cost_usd")
+    if isinstance(cost, (int, float)):
+        meta["total_cost_usd"] = float(cost)
+        meta["cost_observable"] = True
+    usage = envelope.get("usage") or {}
+    in_tok, out_tok = usage.get("input_tokens"), usage.get("output_tokens")
+    if isinstance(in_tok, (int, float)) and isinstance(out_tok, (int, float)):
+        meta["input_tokens"] = int(in_tok)
+        meta["output_tokens"] = int(out_tok)
+        meta["tokens_observable"] = True
+    duration = envelope.get("duration_ms")
+    if isinstance(duration, (int, float)):
+        meta["duration_ms"] = duration
+    return meta
+
+
+def _meta_from_text(text):
+    """V3.8.2 -- best-effort: tries to parse `text` as a `claude -p
+    --output-format json` envelope and extract real cost/usage from it.
+    Returns _empty_meta() on ANY failure (not valid JSON, not a dict, no
+    recognizable fields) -- this must never raise, since it is only ever
+    called from inside an already-failing path and must not mask the real
+    error with a new one."""
+    if not text:
+        return _empty_meta()
+    try:
+        envelope = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return _empty_meta()
+    if not isinstance(envelope, dict):
+        return _empty_meta()
+    return _extract_meta(envelope)
+
+
+def _first_observable_meta(*texts):
+    """Pure: tries each text source in order, returning the first one that
+    actually yields observable cost or token data. _meta_from_text() always
+    returns a (truthy) dict even on total failure, so plain `or`-chaining
+    would never fall through to a later source -- this checks the
+    observable flags explicitly instead. Returns the last (empty) attempt
+    if none of the sources yielded anything."""
+    result = _empty_meta()
+    for text in texts:
+        result = _meta_from_text(text)
+        if result["cost_observable"] or result["tokens_observable"]:
+            return result
+    return result
 
 
 def run_claude(prompt, json_schema=None, timeout_s=None, max_budget_usd=None,
@@ -79,6 +171,31 @@ def run_claude(prompt, json_schema=None, timeout_s=None, max_budget_usd=None,
 
     Raises ClaudeAuthRequired / ClaudeTimeout / ClaudeInvocationError instead
     of ever returning a partial/guessed result.
+
+    This is a thin, behavior-preserving wrapper over run_claude_with_meta()
+    (V3.8.1) that discards the cost/usage metadata -- every pre-V3.8.1
+    caller (verify_business_stage, buying_signals_stage, etc.) is
+    unaffected. Use run_claude_with_meta() directly when the caller needs
+    real cost/token observability (scripts/discovery_worker.py's cost
+    guard)."""
+    result, _meta = run_claude_with_meta(
+        prompt, json_schema=json_schema, timeout_s=timeout_s,
+        max_budget_usd=max_budget_usd, allowed_tools=allowed_tools, model=model,
+    )
+    return result
+
+
+def run_claude_with_meta(prompt, json_schema=None, timeout_s=None, max_budget_usd=None,
+                          allowed_tools=None, model=None):
+    """
+    Identical contract to run_claude(), except it returns (result, meta)
+    where `meta` is whatever real cost/usage data (see _extract_meta) the
+    `claude -p --output-format json` envelope actually reported for THIS
+    call -- never fabricated, never estimated. On any raised exception
+    (ClaudeAuthRequired/ClaudeTimeout/ClaudeInvocationError) no meta is
+    returned at all -- a failed call has no real usage to report, and the
+    caller's own retry/failure-isolation logic handles that path exactly
+    as before.
     """
     cfg = _cfg()["claude_invocation"]
     allowed_tools = allowed_tools or cfg["allowed_tools"]
@@ -109,14 +226,28 @@ def run_claude(prompt, json_schema=None, timeout_s=None, max_budget_usd=None,
         # subprocess exit non-zero with no stderr at all.
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout_s, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired as e:
-        raise ClaudeTimeout(f"claude -p exceeded {timeout_s}s (elapsed {time.monotonic() - started:.1f}s)") from e
+        # V3.8.2 -- Python captures whatever stdout/stderr the process had
+        # already produced before being killed (subprocess.TimeoutExpired's
+        # own attributes); best-effort attempt to recover real cost/usage
+        # from it, though a genuine timeout usually means the CLI never got
+        # far enough to emit a complete envelope.
+        partial_meta = _first_observable_meta(getattr(e, "stdout", None), getattr(e, "stderr", None))
+        raise ClaudeTimeout(
+            f"claude -p exceeded {timeout_s}s (elapsed {time.monotonic() - started:.1f}s)", meta=partial_meta
+        ) from e
 
     if proc.returncode != 0:
         detail = (proc.stderr or "").strip().splitlines()[-1:] or (proc.stdout or "").strip().splitlines()[-1:] or ["<no output>"]
         low = (proc.stdout + proc.stderr).lower()
+        # V3.8.2 -- a non-zero exit (including hitting --max-budget-usd mid-
+        # research) commonly still emits a complete JSON envelope on stdout
+        # reporting the REAL cost incurred before the CLI aborted -- see the
+        # 2026-09-03 live validation, which observed exactly this shape.
+        # Never let this parse attempt mask the real error being raised.
+        failure_meta = _first_observable_meta(proc.stdout, proc.stderr)
         if "not authenticated" in low or ("auth" in low and "login" in low):
-            raise ClaudeAuthRequired(f"claude -p exited {proc.returncode}: {detail[0]}")
-        raise ClaudeInvocationError(f"claude -p exited {proc.returncode}: {detail[0]}")
+            raise ClaudeAuthRequired(f"claude -p exited {proc.returncode}: {detail[0]}", meta=failure_meta)
+        raise ClaudeInvocationError(f"claude -p exited {proc.returncode}: {detail[0]}", meta=failure_meta)
 
     try:
         envelope = json.loads(proc.stdout)
@@ -125,17 +256,23 @@ def run_claude(prompt, json_schema=None, timeout_s=None, max_budget_usd=None,
 
     if envelope.get("subtype") == "error_during_execution" or envelope.get("is_error"):
         msg = envelope.get("result") or envelope.get("error") or "unknown error"
+        # The envelope itself parsed fine here -- its own cost/usage fields
+        # (if any) are real and available even though the call is being
+        # treated as an error.
+        error_meta = _extract_meta(envelope)
         if "authent" in str(msg).lower() or "login" in str(msg).lower():
-            raise ClaudeAuthRequired(f"claude -p reported an auth error: {msg}")
-        raise ClaudeInvocationError(f"claude -p reported an error: {msg}")
+            raise ClaudeAuthRequired(f"claude -p reported an auth error: {msg}", meta=error_meta)
+        raise ClaudeInvocationError(f"claude -p reported an error: {msg}", meta=error_meta)
+
+    meta = _extract_meta(envelope)
 
     if json_schema is None:
-        return envelope.get("result", "")
+        return envelope.get("result", ""), meta
 
     if "structured_output" in envelope:
-        return envelope["structured_output"]
+        return envelope["structured_output"], meta
     try:
-        return json.loads(envelope.get("result", ""))
+        return json.loads(envelope.get("result", "")), meta
     except json.JSONDecodeError as e:
         raise ClaudeInvocationError(
             f"claude -p reply did not match the requested json_schema: {envelope.get('result', '')[:200]!r}"

@@ -223,6 +223,194 @@ replaced with a **structural**, not merely promptable, safety model:
   path, unattended or not — this specific rule is not superseded by
   anything above.
 
+### V3.8 update (2026-09-03) — Automated Ranking Enrichment; narrowly
+### supersedes one V3.7 sentence about `reevaluate_needs_enrichment.py`
+
+Through V3.7, `scripts/import_ranking_observation.py` and
+`scripts/reevaluate_needs_enrichment.py` were both described as "human-
+operated CLI tools, never called by `acquisition_worker.py` or any
+unattended Claude subprocess." V3.8 deliberately narrows that, by explicit
+user authorization, for `reevaluate_needs_enrichment.py`'s own re-evaluation
+logic ONLY (imported and called as a plain Python function — never invoked
+as a "researcher" and never given anything to guess):
+
+- `scripts/rank_enrichment.py` now runs automatically inside
+  `scripts/acquisition_worker.py`'s daily cycle, in this order: (1) resume
+  incomplete pending-lead work, (2) **drain the ranking-enrichment backlog**,
+  (3) run `scripts/reevaluate_needs_enrichment.py`'s deterministic
+  re-evaluation for every lead touched, (4) advance anything newly
+  `QUALIFIED`/`HIGH_PRIORITY` through the existing intelligence/dossier/
+  asset/contact-identity chain, (5) **only then** spend any remaining budget
+  on fresh discovery. This ordering is the entire point of V3.8: it stops
+  `NEEDS_ENRICHMENT` from being a parking lot that only grows, without
+  spending one extra dollar of Claude research to do it.
+- `scripts/import_ranking_observation.py` itself is **not** newly called
+  unattended — it remains a human-operated CLI for producing a new,
+  provenance-checked observation from scratch. What V3.8 automates is
+  narrower and safer than that: `scripts/ranking_providers.py`'s
+  `ManualImportProvider` and `SemrushFileProvider` only ever **read**
+  already-durable, already-vetted evidence — either previously imported
+  into `data/rankings/<market_id>.csv` by a human running that CLI, or a
+  small pre-vetted observations file (the same
+  `schemas/ranking_evidence_observation.schema.json` shape that CLI already
+  accepts via `--file`) a human/analyst drops into
+  `config/ranking_enrichment.yaml: inbox_dir`. The human still produces and
+  vets every fact; the pipeline automates noticing it, validating its
+  provenance (reusing `import_ranking_observation.py`'s own
+  `validate_observation()` — nothing re-implemented or loosened), and
+  running the existing deterministic re-scoring chain.
+- **No live ranking-provider call, no SEMrush/Google/any other credential,
+  and no Claude call exists anywhere in this path.** `scripts/
+  ranking_providers.py: ExternalRankProvider` is a deliberately unimplemented
+  interface — it always returns `RANKING_SOURCE_REQUIRED`. Enabling a real,
+  credential-backed live rank-tracking provider is explicitly out of scope
+  for V3.8 and requires its own future authorization (a real provider key +
+  a cost review), exactly like `scripts/send_executor.py`'s real-send path
+  requiring its own separate authorization before V3.5/V3.8 changed
+  anything about it.
+- Every ceiling this stage obeys lives in `config/ranking_enrichment.yaml`:
+  `max_enrichment_leads_per_run`, `max_queries_per_lead`,
+  `max_provider_requests_per_run`, `freshness_days` (kept in sync with
+  `config/limits.yaml: ranking_freshness_days`, guarded by a test). FIT/GAP
+  thresholds (`config/scoring.yaml`) are completely unchanged and untouched
+  by this stage — ranking enrichment can only supply evidence that feeds
+  the existing, frozen scoring functions; it never lowers a bar to qualify
+  a lead.
+- `MANUAL_REVIEW` leads are never entered into the ranking-enrichment
+  queue — see `scripts/rank_enrichment.py: build_enrichment_queue`'s
+  defensive status filter. Ranking evidence alone can never qualify a
+  `MANUAL_REVIEW` lead; that gate stays a human FIT judgment call.
+- `scripts/acquisition_worker.py`'s own Claude research budget/timeouts/
+  discovery caps (`max_fresh_market_cells_per_run`,
+  `max_fresh_candidates_researched_per_run`) are **completely unchanged** by
+  V3.8 — the ranking-enrichment stage never competes for or extends that
+  budget, and a growing enrichment backlog is never a reason to raise it.
+  See `reports/V3.8-AUTOMATED-RANKING-ENRICHMENT-REPORT.md` for the full
+  design and the real backlog snapshot at time of writing.
+
+### V3.8.1 update (2026-09-03) — Discovery-Only Production Mode + hard
+### cost governors; changes the SCHEDULED DEFAULT, supersedes nothing
+
+Context: roughly $100 in Claude/API spend accumulated over two days of
+building/running this pipeline — unacceptable for the current
+lead-acquisition stage. V3.8.1 splits responsibility permanently:
+
+- **Fedora / Lead Engine** discovers candidate businesses, runs cheap
+  deterministic verification, saves candidates, syncs them to a
+  **CANDIDATES** Google Sheet, and **stops**.
+- **ChatGPT + the user** do everything downstream: qualification,
+  Google/Maps opportunity research, competitor research, the SEO wedge,
+  contact research, personalized outreach, Gmail execution, reply
+  handling/sales.
+
+This is a **routing change, not a deletion**. Every V3.1–V3.8 stage
+(FIT/GAP scoring, buying signals, ranking enrichment, specialist agents,
+contact identity, outreach drafting, QA, send-window planning,
+`READY_TO_SEND` export) still exists, is still tested, and is still fully
+callable — it simply never runs on the default scheduled path anymore.
+
+- **`config/acquisition.yaml: production_mode`** (default
+  `discovery_only`) is the single switch. `scripts/run_daily.py` fails
+  closed (`infrastructure_failure`, non-zero exit) on any value other than
+  `discovery_only`/`full_pipeline` — never guesses which pipeline to run.
+  `full_pipeline` reproduces the complete, unchanged V3.5–V3.8 flow
+  exactly (still available for a deliberate manual/explicit run); it is
+  never the scheduled timer's default again.
+- **`scripts/discovery_worker.py`** is the new default flow: resume →
+  preflight → discover (one Claude call per market cell, reusing V3.7's
+  tier-weighted rotation unchanged) → **deterministic** basic verification
+  (`scripts/candidate_verification.py` — zero additional Claude calls per
+  candidate; "CLAUDE DISCOVERS, CLAUDE DOES NOT ANALYZE") → persist at
+  `CANDIDATE_VERIFIED`/`CANDIDATE_REJECTED` (new, deliberately terminal
+  statuses — never overload `NEEDS_ENRICHMENT`, never touch any existing
+  `QUALIFIED`/`NEEDS_ENRICHMENT`/`MANUAL_REVIEW`/`CONTACT_FORM_READY`/
+  `READY_TO_SEND` record) → sync the CANDIDATES sheet
+  (`scripts/sync_handoff.py: sync_candidates()`, idempotent upsert by
+  `lead_id`, additive alongside the unchanged EMAIL_READY/
+  CONTACT_FORM_READY/RESULTS tabs) → a simplified report
+  (`scripts/report_discovery_only.py`) → stop.
+- **Hard cost governors** (`config/discovery_only.yaml`), checked BEFORE
+  every Claude call, never only after: a daily `$` budget
+  (`daily_claude_budget_usd`) enforced via a durable, date-keyed ledger
+  (`scripts/cost_ledger.py`, `data/runtime/cost/<date>.json`, gitignored)
+  that is **shared across every invocation that day** — the scheduled run,
+  a same-day catch-up run, and any manual retry all draw from the same
+  allowance, never a fresh budget each time; an independent
+  `max_claude_calls_per_run` circuit breaker that holds even when $ cost
+  isn't observable; a `max_worker_runtime_seconds` far smaller than
+  `full_pipeline`'s 2700s; and `min_candidates_target`/
+  `max_candidates_target`, which are a **goal, never a quota** — hitting a
+  budget/call/time limit before the target is reached is reported as
+  `budget_status` (e.g. `EXHAUSTED`, `CALL_CAP_REACHED`), never treated as
+  a failure, and never triggers a retry, a different market, or another
+  Claude call. Real cost/token figures come from `claude -p`'s own JSON
+  envelope (`claude_invoke.py: run_claude_with_meta`) — never invented;
+  when unobservable, every cost field is honestly `None`/`UNKNOWN` and
+  only the call-count/time governors remain enforceable.
+- **Auth failure fails closed exactly once** — no retry loop, no repeated
+  spawn, no acquisition cycle triggered — reports `CLAUDE_AUTH_REQUIRED`
+  and stops, identical in spirit to the V3.5 preflight model.
+- See `reports/V3.8.1-DISCOVERY-ONLY-PRODUCTION-REPORT.md` for the full
+  design, the call graph, and cost-control rationale.
+
+### V3.8.2 update (2026-09-03) — Cost-Guard Hardening; corrects two real
+### defects the first live validation exposed, supersedes nothing above
+
+The V3.8.1 first live validation (same day) succeeded functionally but
+surfaced two real cost-accounting gaps: (1) a failed Claude call can still
+be billable — a call that hit its own per-call `--max-budget-usd` circuit
+breaker mid-research still cost a real $0.5358346, which never reached the
+daily ledger because `max_claude_calls_per_run`/the ledger only ever
+recorded a call AFTER it succeeded; (2) the worker-runtime ceiling was
+checked only BETWEEN market cells, never against an in-flight call, so
+actual wall-clock ran to 290s against a configured 180s cap. Both are
+closed structurally, not just documented:
+
+- **The call cap now counts every ATTEMPT**, not every success —
+  `scripts/discovery_worker.py: CostGuard.reserve_attempt()` reserves a
+  call-budget slot and writes a `PENDING` entry to the daily ledger
+  (`scripts/cost_ledger.py: start_attempt()`) **before** the real `claude
+  -p` subprocess is spawned, and it is never refunded regardless of
+  outcome (success, failure, timeout, malformed output, non-zero exit, or
+  hitting the call's own budget). A crash/kill between reservation and
+  completion still leaves this honest, unknown-cost trace rather than
+  losing the attempt from accounting entirely.
+- **A failed call's real cost now reaches the daily ledger.**
+  `claude_invoke.py`'s exceptions (`ClaudeAuthRequired`/`ClaudeTimeout`/
+  `ClaudeInvocationError`, now sharing a `ClaudeCallError` base) carry a
+  `.meta` attribute populated from whatever the failed call's own output
+  exposed — the common real case (a `--max-budget-usd` trip) still emits a
+  complete JSON envelope reporting the real cost before exiting non-zero.
+  `CostGuard.record_attempt_result()` records this exactly like a
+  success's cost.
+- **Conservative accounting when cost is genuinely unknown.** A run's
+  stats now report `budget_accounting_status`
+  (`COMPLETE`/`INCOMPLETE_UNKNOWN_CALL_COST`) and `unknown_cost_attempts`
+  explicitly; `budget_remaining_usd` is `None` — never a confident number
+  — the moment any attempt today has unknown cost, and the call cap
+  remains the hard backstop in that state, exactly as it already was.
+  `observed_total_cost_usd` still reports the sum of every KNOWN cost
+  (never suppressed to `None` just because some other attempt is
+  unknown) — a known partial figure, honestly labeled incomplete, beats
+  reporting nothing.
+- **The worker runtime deadline now constrains individual Claude calls,
+  not just the gap between market cells.** Before every attempt (each
+  retry included), the subprocess timeout is clamped to
+  `min(configured per-call timeout, remaining worker seconds)`, and a call
+  is never even started if less than `config/discovery_only.yaml:
+  min_seconds_to_start_claude_call` (60s) of runtime remains. A call that
+  is genuinely killed by the worker deadline mid-flight is recorded
+  (attempted, failed, `WORKER_DEADLINE_TIMEOUT`) and never retried — the
+  whole run stops cleanly, exactly per the "no replacement/retry call"
+  rule.
+- `max_budget_usd_per_call` ($0.50) was inspected, not raised — see
+  `config/discovery_only.yaml`'s own comment for the documented
+  relationship between it, `daily_claude_budget_usd`,
+  `max_claude_calls_per_run`, `max_worker_runtime_seconds`, and the
+  (never-overriding) candidate target.
+- See `reports/V3.8.2-COST-GUARD-HARDENING-REPORT.md` for the full root-
+  cause analysis and test coverage.
+
 ### Rules unchanged since V1–V3.4
 
 - The daily/scheduled run (`scripts/run_daily.sh`) automates the

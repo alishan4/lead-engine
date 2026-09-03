@@ -65,7 +65,27 @@ email and does not hold Gmail credentials — see `OPERATING-RULES.md` §1.
 - `config/acquisition.yaml` / `scripts/acquisition_worker.py` (V3.5) — the
   ceilings/timeouts/budgets and orchestration for the unattended Claude
   research worker; see `OPERATING-RULES.md` §4's V3.5 update for the
-  structural safety model before touching either.
+  structural safety model before touching either. **V3.8.1: this is now
+  the `full_pipeline` path only** — `config/acquisition.yaml:
+  production_mode` (default `discovery_only`) controls which flow
+  `scripts/run_daily.py` actually runs; see the next entry.
+- `config/discovery_only.yaml` / `scripts/discovery_worker.py` /
+  `scripts/candidate_verification.py` / `scripts/cost_ledger.py` /
+  `scripts/report_discovery_only.py` (V3.8.1) — **the default scheduled
+  production path.** Discovers candidates, runs cheap/deterministic
+  verification (zero additional Claude calls), persists them at
+  `CANDIDATE_VERIFIED`/`CANDIDATE_REJECTED`, syncs the CANDIDATES Google
+  Sheet, writes a simplified report, and stops — nothing past basic
+  verification runs automatically (no FIT/GAP, ranking enrichment, SEO
+  agents, contact identity, outreach drafting, or Gmail). Governed by a
+  hard daily $ budget (`cost_ledger.py`'s durable, date-keyed ledger,
+  shared across the scheduled run/same-day catch-up/manual retries), an
+  independent Claude-call cap, and a much shorter wall-clock ceiling than
+  `full_pipeline`'s 2700s. See `OPERATING-RULES.md`'s V3.8.1 update and
+  `reports/V3.8.1-DISCOVERY-ONLY-PRODUCTION-REPORT.md` for the full design
+  and cost-control rationale. `production_mode: full_pipeline` in
+  `config/acquisition.yaml` is the explicit, still-fully-functional
+  alternative — never the scheduled timer's default.
 - `config/handoff.yaml` / `scripts/handoff_lib.py` / `scripts/handoff_backend.py`
   / `scripts/sync_handoff.py` / `scripts/import_outreach_results.py` /
   `scripts/export_tracker_csv.py` (V3.6) — the shared READY_TO_SEND queue
@@ -77,10 +97,26 @@ email and does not hold Gmail credentials — see `OPERATING-RULES.md` §1.
 - `scripts/import_ranking_observation.py` / `scripts/reevaluate_needs_enrichment.py`
   (V3.7) — the external ranking-evidence interface and the V3.1-track
   deterministic re-evaluation it feeds; see `docs/AUTOMATION.md` "Ranking
-  evidence ingestion + deterministic re-evaluation." Both are human-
-  operated CLI tools, never called by `acquisition_worker.py` or any
-  unattended Claude subprocess, and neither is ever given a SEMrush/Google
-  credential.
+  evidence ingestion + deterministic re-evaluation." Both remain human-
+  operated CLI tools for direct/manual use, and neither is ever given a
+  SEMrush/Google credential — but see the V3.8 entry below for the one
+  deliberate change to "never called by `acquisition_worker.py`."
+- `config/ranking_enrichment.yaml` / `scripts/rank_enrichment.py` /
+  `scripts/ranking_providers.py` (V3.8) — Automated Ranking Enrichment.
+  Drains the `NEEDS_ENRICHMENT` backlog before any fresh-discovery Claude
+  spend: prioritizes real `NEEDS_ENRICHMENT` records (never
+  `MANUAL_REVIEW`), selects a small bounded set of money queries per lead
+  (reuses `config/niches.yaml: money_keywords`, invents nothing), asks a
+  configured provider chain for evidence, and — only for whatever it
+  actually finds — calls the existing, unchanged
+  `scripts/import_ranking_observation.py` /
+  `scripts/reevaluate_needs_enrichment.py` machinery. Fully deterministic,
+  zero-Claude, zero live network call, zero credential of any kind; every
+  query it can't answer fails closed to `RANKING_SOURCE_REQUIRED`, never a
+  guessed ranking. This is the one deliberate exception to "never called by
+  `acquisition_worker.py`" above — see `OPERATING-RULES.md`'s V3.8 update
+  for why that's safe, and `reports/V3.8-AUTOMATED-RANKING-ENRICHMENT-REPORT.md`
+  for the full design.
 - `reports/` — dated engineering reports for each build phase (V1 through
   V3.3). Real contact-channel identifiers (emails, phone numbers, personal
   names tied to real third-party businesses) are redacted from these
